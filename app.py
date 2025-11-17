@@ -17,6 +17,7 @@ METRIC_INDEX = "metricbeat-*"
 def get_es_client():
     """
     Create a cached Elasticsearch client using secrets.
+    Compatible with elasticsearch-py 8.x+.
     """
     ES_HOST = st.secrets["ES_HOST"]
     ES_PORT = int(st.secrets.get("ES_PORT", 9243))
@@ -26,7 +27,7 @@ def get_es_client():
 
     es = Elasticsearch(
         hosts=[{"host": ES_HOST, "port": ES_PORT, "scheme": ES_SCHEME}],
-        basic_auth=(ES_USER, ES_PASS),   # new-style auth for ES 8+ 
+        basic_auth=(ES_USER, ES_PASS),
         verify_certs=True,
     )
     return es
@@ -127,7 +128,7 @@ def render_overview(es, time_from, time_to):
     }
 
     res_time = es.search(index=SYSLOG_INDEX, body=body_time)
-    buckets = res_time["aggregations"]["per_interval"]["buckets"]
+    buckets = res_time.body["aggregations"]["per_interval"]["buckets"]
     df_time = pd.DataFrame(
         [
             {
@@ -169,7 +170,7 @@ def render_overview(es, time_from, time_to):
         },
     }
     res_sev = es.search(index=SYSLOG_INDEX, body=body_sev)
-    buckets = res_sev["aggregations"]["by_sev"]["buckets"]
+    buckets = res_sev.body["aggregations"]["by_sev"]["buckets"]
     df_sev = pd.DataFrame(
         [{"severity": b["key"], "count": b["doc_count"]} for b in buckets]
     )
@@ -208,7 +209,7 @@ def render_overview(es, time_from, time_to):
     df_host = pd.DataFrame(
         [
             {"host": b["key"], "errors": b["doc_count"]}
-            for b in res_err_host["aggregations"]["by_host"]["buckets"]
+            for b in res_err_host.body["aggregations"]["by_host"]["buckets"]
         ]
     )
 
@@ -226,7 +227,7 @@ def render_overview(es, time_from, time_to):
     df_ip = pd.DataFrame(
         [
             {"ip": b["key"], "errors": b["doc_count"]}
-            for b in res_err_ip["aggregations"]["by_ip"]["buckets"]
+            for b in res_err_ip.body["aggregations"]["by_ip"]["buckets"]
         ]
     )
 
@@ -292,7 +293,7 @@ def render_syslog_logs(es, time_from, time_to):
     }
 
     res = es.search(index=SYSLOG_INDEX, body=body)
-    hits = res["hits"]["hits"]
+    hits = res.body["hits"]["hits"]
 
     rows = []
     for h in hits:
@@ -388,7 +389,7 @@ def render_metrics(es, time_from, time_to):
         },
     }
     res_hosts = es.search(index=METRIC_INDEX, body=body_hosts)
-    host_buckets = res_hosts["aggregations"]["hosts"]["buckets"]
+    host_buckets = res_hosts.body["aggregations"]["hosts"]["buckets"]
     hosts = [b["key"] for b in host_buckets]
 
     if not hosts:
@@ -432,7 +433,7 @@ def render_metrics(es, time_from, time_to):
     }
 
     res = es.search(index=METRIC_INDEX, body=body)
-    buckets = res["aggregations"]["per_interval"]["buckets"]
+    buckets = res.body["aggregations"]["per_interval"]["buckets"]
     rows = []
     for b in buckets:
         cpu_val = b["cpu"]["value"]
@@ -500,7 +501,7 @@ def render_metrics(es, time_from, time_to):
     }
 
     res_disk = es.search(index=METRIC_INDEX, body=body_disk)
-    dbuckets = res_disk["aggregations"]["by_fs"]["buckets"]
+    dbuckets = res_disk.body["aggregations"]["by_fs"]["buckets"]
     drows = []
     for b in dbuckets:
         used = b["used"]["value"]
@@ -545,7 +546,7 @@ def render_security_ssh(es, time_from, time_to):
         },
     }
     res_time = es.search(index=SYSLOG_INDEX, body=body_time)
-    buckets = res_time["aggregations"]["per_interval"]["buckets"]
+    buckets = res_time.body["aggregations"]["per_interval"]["buckets"]
     df_time = pd.DataFrame(
         [
             {
@@ -579,6 +580,205 @@ def render_security_ssh(es, time_from, time_to):
     df_host = pd.DataFrame(
         [
             {"host": b["key"], "failed_logins": b["doc_count"]}
+            for b in res_host.body["aggregations"]["by_host"]["buckets"]
+        ]
+    )
+    st.markdown("#### Top hosts by SSH failed logins")
+    st.dataframe(df_host, use_container_width=True)
+
+    # Raw events
+    body_events = {
+        "size": 200,
+        "sort": [{"@timestamp": {"order": "desc"}}],
+        "query": ssh_query,
+        "_source": ["@timestamp", "host", "message"],
+    }
+    res_ev = es.search(index=SYSLOG_INDEX, body=body_events)
+    hits = res_ev.body["hits"]["hits"]
+
+    rows = []
+    for h in hits:
+        src = h["_source"]
+        hostname, host_ip = extract_host_info(src)
+        rows.append(
+            {
+                "timestamp": src.get("@timestamp"),
+                "host": hostname,
+                "host_ip": host_ip,
+                "message": src.get("message"),
+            }
+        )
+    df_ev = pd.DataFrame(rows)
+    st.markdown("#### Latest SSH failed events")
+    st.dataframe(df_ev, use_container_width=True, height=400)
 
 
-::contentReference[oaicite:1]{index=1}
+# =========================
+# Dashboard: Network Devices (VyOS)
+# =========================
+def render_vyos(es, time_from, time_to):
+    st.subheader("🌐 Network Devices (VyOS)")
+
+    keyword = st.sidebar.text_input(
+        "Hostname contains (for VyOS)",
+        value="vyos",
+    )
+
+    sev_option = st.sidebar.selectbox(
+        "Severity filter for VyOS",
+        ["All severities", "Only errors (≤ 3)", "Warnings and above (≤ 4)"],
+        index=0,
+    )
+    if sev_option == "All severities":
+        sev_codes = None
+    elif sev_option == "Only errors (≤ 3)":
+        sev_codes = [0, 1, 2, 3]
+    else:
+        sev_codes = [0, 1, 2, 3, 4]
+
+    must_filters = [
+        {"range": {"@timestamp": {"gte": time_from, "lte": time_to}}},
+
+
+        {"wildcard": {"host.hostname.keyword": f"*{keyword}*"}},
+    ]
+    if sev_codes is not None:
+        must_filters.append({"terms": {"severity": sev_codes}})
+
+    body = {
+        "size": 500,
+        "sort": [{"@timestamp": {"order": "desc"}}],
+        "query": {"bool": {"filter": must_filters}},
+        "_source": ["@timestamp", "host", "message", "severity", "severity_label"],
+    }
+
+    res = es.search(index=SYSLOG_INDEX, body=body)
+    hits = res.body["hits"]["hits"]
+
+    rows = []
+    for h in hits:
+        src = h["_source"]
+        hostname, host_ip = extract_host_info(src)
+        sev_code, sev_name = extract_severity(src)
+        rows.append(
+            {
+                "timestamp": src.get("@timestamp"),
+                "hostname": hostname,
+                "host_ip": host_ip,
+                "severity_code": sev_code,
+                "severity_name": sev_name,
+                "message": src.get("message"),
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        st.info(f"No VyOS events for hostnames containing '{keyword}'.")
+        return
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+    # KPIs
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("Total VyOS events", len(df))
+    with c2:
+        st.metric("Number of VyOS hosts", int(df["hostname"].nunique()))
+
+    # Severity distribution
+    st.markdown("#### Severity distribution (VyOS)")
+    sev_dist = (
+        df.groupby("severity_name").size().reset_index(name="count")
+    )
+    if not sev_dist.empty:
+        st.bar_chart(sev_dist.set_index("severity_name"))
+    else:
+        st.info("No severity data for VyOS logs.")
+
+    # Events over time
+    st.markdown("#### VyOS events over time")
+    df_chart = df.copy()
+    df_chart["time_bucket"] = df_chart["timestamp"].dt.floor("1min")
+    grp = (
+        df_chart.groupby(["time_bucket", "severity_name"])
+        .size()
+        .reset_index(name="count")
+    )
+    pivot = grp.pivot(
+        index="time_bucket",
+        columns="severity_name",
+        values="count",
+    ).fillna(0)
+    st.line_chart(pivot)
+
+    # Detail table
+    st.markdown("#### Detailed VyOS events")
+    df_show = df.sort_values("timestamp", ascending=False)
+    df_show = df_show[
+        [
+            "timestamp",
+            "hostname",
+            "host_ip",
+            "severity_code",
+            "severity_name",
+            "message",
+        ]
+    ]
+    st.dataframe(df_show, use_container_width=True, height=500)
+
+
+# =========================
+# Main app
+# =========================
+def main():
+    st.set_page_config(
+        page_title="Network Log Dashboard",
+        layout="wide",
+    )
+    st.title("Network Monitoring Dashboard")
+    st.caption("Streamlit + Elasticsearch (Syslog + Metricbeat + VyOS)")
+
+    try:
+        es = get_es_client()
+        # Simple health check (ObjectApiResponse -> dùng .body)
+        info = es.info()
+        cluster_name = info.body.get("cluster_name", "unknown")
+        st.sidebar.success(f"Connected to ES cluster: {cluster_name}")
+    except (ApiError, TransportError) as e:
+        st.sidebar.error("Failed to connect to Elasticsearch.")
+        st.error(f"Elasticsearch error: {e}")
+        st.stop()
+    except Exception as e:
+        st.sidebar.error("Unexpected error connecting to Elasticsearch.")
+        st.error(f"Error: {e}")
+        st.stop()
+
+    time_from, time_to, time_label = sidebar_time_range()
+    st.sidebar.markdown(f"**Current time range:** {time_label}")
+
+    section = st.sidebar.radio(
+        "Select dashboard",
+        [
+            "Overview",
+            "Syslog Logs",
+            "Metrics (CPU/RAM/Disk)",
+            "Security / SSH",
+            "Network Devices (VyOS)",
+        ],
+        index=0,
+    )
+
+    if section == "Overview":
+        render_overview(es, time_from, time_to)
+    elif section == "Syslog Logs":
+        render_syslog_logs(es, time_from, time_to)
+    elif section == "Metrics (CPU/RAM/Disk)":
+        render_metrics(es, time_from, time_to)
+    elif section == "Security / SSH":
+        render_security_ssh(es, time_from, time_to)
+    elif section == "Network Devices (VyOS)":
+        render_vyos(es, time_from, time_to)
+
+
+if __name__ == "__main__":
+    main()
