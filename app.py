@@ -366,6 +366,44 @@ if dashboard_type == T["dash_syslog"]:
             else:
                 fig = px.pie(sev_dist, names="severity_name", values="count", hole=0.25)
                 st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown(f"### {T['host_details']}")
+        hosts_all = sorted(df["hostname"].dropna().unique())
+        sel_host = st.selectbox(T["select_host"], options=hosts_all, index=0 if hosts_all else None)
+        
+        if sel_host:
+            # Last logs for selected host
+            st.markdown(f"#### {T['last_logs']}: {sel_host}")
+            last_logs = df[df["hostname"] == sel_host].sort_values("timestamp", ascending=False).head(100)
+            st.dataframe(last_logs[["timestamp","severity_name","message","host_ip"]], use_container_width=True, height=260)
+        
+            # CPU/Mem mini chart cho host đã chọn (dùng metricbeat)
+            st.markdown(f"#### {T['cpu_mem_for_host']}: {sel_host}")
+            dfm_host = query_metrics(time_range)
+            dfm_host = dfm_host[dfm_host["hostname"] == sel_host]
+            if dfm_host.empty:
+                st.info(T["no_data"])
+            else:
+                cmini1, cmini2 = st.columns(2)
+                with cmini1:
+                    cpu_df = dfm_host[dfm_host["cpu_pct"].notna()].copy()
+                    if not cpu_df.empty:
+                        cpu_df["t"] = cpu_df["timestamp"].dt.floor("1min")
+                        cpu_line = cpu_df.groupby("t")["cpu_pct"].mean().reset_index()
+                        cpu_line = cpu_line.set_index("t") * 100.0
+                        st.line_chart(cpu_line)
+                    else:
+                        st.info("No CPU data.")
+                with cmini2:
+                    mem_df = dfm_host[dfm_host["mem_used_pct"].notna()].copy()
+                    if not mem_df.empty:
+                        mem_df["t"] = mem_df["timestamp"].dt.floor("1min")
+                        mem_line = mem_df.groupby("t")["mem_used_pct"].mean().reset_index()
+                        mem_line = mem_line.set_index("t") * 100.0
+                        st.line_chart(mem_line)
+                    else:
+                        st.info("No memory data.")
+
 # ========================
 # 5) Metrics dashboard
 # ========================
