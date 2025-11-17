@@ -436,7 +436,6 @@ if dash == T["metric"]:
                     "disk_max_pct": T["col_disk"],
                 }
             )
-            # Sắp xếp theo CPU hoặc Mem giảm dần cho dễ nhìn
             sort_cols = [T["col_cpu"], T["col_mem"], T["col_disk"]]
             existing = [c for c in sort_cols if c in status.columns]
             if existing:
