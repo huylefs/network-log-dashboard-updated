@@ -476,9 +476,7 @@ elif dashboard_type == T["dash_metrics"]:
                 mem_w = st.number_input(T["mem_warn"], min_value=10, max_value=100, value=80, step=5)
             with dw:
                 disk_w = st.number_input(T["disk_warn"], min_value=10, max_value=100, value=90, step=5)
-            
-            styled = snap_df.style.apply(lambda _df: style_status(_df, cpu_warn=cpu_w, mem_warn=mem_w, disk_warn=disk_w), axis=None)
-            st.dataframe(styled, use_container_width=True, height=380)
+
             
 
 
