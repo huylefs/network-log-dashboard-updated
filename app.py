@@ -168,7 +168,6 @@ LANGS = {
     },
 }
 
-
 def get_time_range_gte(label: str) -> str:
     # Hỗ trợ cả EN/VI
     if label in ("Last 15 minutes", "15 phút gần nhất"):
@@ -182,16 +181,14 @@ def get_time_range_gte(label: str) -> str:
     return "now-1h"
 
 # ========================
-# 2) Queries
+# 2) Queries (Docs)
 # ========================
-
 
 def query_syslog(time_range_label: str, severity_codes=None, size: int = 500) -> pd.DataFrame:
     gte = get_time_range_gte(time_range_label)
     must_filters = [{"range": {"@timestamp": {"gte": gte, "lte": "now"}}}]
     if severity_codes:
-        must_filters.append(
-            {"terms": {"log.syslog.severity.code": severity_codes}})
+        must_filters.append({"terms": {"log.syslog.severity.code": severity_codes}})
 
     body = {
         "size": size,
@@ -228,7 +225,6 @@ def query_syslog(time_range_label: str, severity_codes=None, size: int = 500) ->
     if not df.empty:
         df["timestamp"] = pd.to_datetime(df["timestamp"])
     return df
-
 
 def query_metrics(time_range_label: str, size: int = 1000) -> pd.DataFrame:
     gte = get_time_range_gte(time_range_label)
@@ -269,6 +265,130 @@ def query_metrics(time_range_label: str, size: int = 1000) -> pd.DataFrame:
         df["timestamp"] = pd.to_datetime(df["timestamp"])
     return df
 
+# ========================
+# 2b) Queries (Timeseries via aggregations)
+# ========================
+
+@st.cache_data(ttl=30, show_spinner=False)
+def es_timeseries_avg(index: str, dataset: str, field: str,
+                      time_range_label: str, interval: str = "1m") -> pd.DataFrame:
+    """
+    Trả về DataFrame timeseries dạng wide:
+    index = time_bucket, columns = host, value = avg(field) / bucket
+    """
+    gte = get_time_range_gte(time_range_label)
+    body = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    {"range": {"@timestamp": {"gte": gte, "lte": "now"}}},
+                    {"term": {"event.dataset": dataset}}
+                ]
+            }
+        },
+        "aggs": {
+            "by_host": {
+                "terms": {"field": "host.hostname.keyword", "size": 50},
+                "aggs": {
+                    "ts": {
+                        "date_histogram": {
+                            "field": "@timestamp",
+                            "fixed_interval": interval,
+                            "min_doc_count": 0
+                        },
+                        "aggs": {
+                            "val": {"avg": {"field": field}}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    res = es.search(index=index, body=body)
+    host_buckets = res.get("aggregations", {}).get("by_host", {}).get("buckets", [])
+
+    all_times = set()
+    for hb in host_buckets:
+        for b in hb["ts"]["buckets"]:
+            all_times.add(b["key_as_string"])
+    idx = pd.to_datetime(sorted(all_times))
+    df = pd.DataFrame(index=idx)
+
+    for hb in host_buckets:
+        host = hb["key"]
+        series = {b["key_as_string"]: b["val"]["value"] for b in hb["ts"]["buckets"]}
+        s = pd.Series(series)
+        s.index = pd.to_datetime(s.index)
+        df[host] = s
+
+    df.index.name = "time_bucket"
+    return df
+
+@st.cache_data(ttl=30, show_spinner=False)
+def es_mem_timeseries(index: str, time_range_label: str, interval: str = "1m") -> pd.DataFrame:
+    """
+    Memory timeseries với script để tương thích cả:
+    - system.memory.actual.used.pct
+    - system.memory.used.pct
+    """
+    gte = get_time_range_gte(time_range_label)
+    body = {
+        "size": 0,
+        "query": {"bool": {"filter": [
+            {"range": {"@timestamp": {"gte": gte, "lte": "now"}}},
+            {"term": {"event.dataset": "system.memory"}}
+        ]}},
+        "aggs": {
+            "by_host": {
+                "terms": {"field": "host.hostname.keyword", "size": 50},
+                "aggs": {
+                    "ts": {
+                        "date_histogram": {
+                            "field": "@timestamp",
+                            "fixed_interval": interval,
+                            "min_doc_count": 0
+                        },
+                        "aggs": {
+                            "val": {
+                                "avg": {
+                                    "script": {
+                                        "source": """
+double v = Double.NaN;
+if (doc.containsKey('system.memory.actual.used.pct') && !doc['system.memory.actual.used.pct'].empty) {
+  v = doc['system.memory.actual.used.pct'].value;
+} else if (doc.containsKey('system.memory.used.pct') && !doc['system.memory.used.pct'].empty) {
+  v = doc['system.memory.used.pct'].value;
+}
+if (Double.isNaN(v)) return null; else return v;
+"""
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    res = es.search(index=index, body=body)
+    host_buckets = res["aggregations"]["by_host"]["buckets"]
+
+    all_times = set()
+    for hb in host_buckets:
+        for b in hb["ts"]["buckets"]:
+            all_times.add(b["key_as_string"])
+    idx = pd.to_datetime(sorted(all_times))
+    df = pd.DataFrame(index=idx)
+
+    for hb in host_buckets:
+        host = hb["key"]
+        series = {b["key_as_string"]: b["val"]["value"] for b in hb["ts"]["buckets"]}
+        s = pd.Series(series); s.index = pd.to_datetime(s.index)
+        df[host] = s
+
+    df.index.name = "time_bucket"
+    return df
 
 # ========================
 # 3) UI
@@ -276,8 +396,7 @@ def query_metrics(time_range_label: str, size: int = 1000) -> pd.DataFrame:
 st.set_page_config(page_title=LANGS["en"]["page_title"], layout="wide")
 
 st.sidebar.header(LANGS["en"]["controls"] + " / " + LANGS["vi"]["controls"])
-lang_choice = st.sidebar.selectbox(
-    "Language / Ngôn ngữ", ["English", "Tiếng Việt"], index=0)
+lang_choice = st.sidebar.selectbox("Language / Ngôn ngữ", ["English", "Tiếng Việt"], index=0)
 LANG = "en" if lang_choice == "English" else "vi"
 T = LANGS[LANG]
 
@@ -317,18 +436,15 @@ if dashboard_type == T["dash_syslog"]:
             T["sev_notice"]: [0, 1, 2, 3, 4, 5],
         }
 
-    sev_label = st.sidebar.selectbox(
-        T["sev_filter"], list(sev_opts.keys()), index=0)
+    sev_label = st.sidebar.selectbox(T["sev_filter"], list(sev_opts.keys()), index=0)
     sev_codes = sev_opts[sev_label]
-
     message_query = st.sidebar.text_input(T["search_msg"], value="")
 
     df = query_syslog(time_range, sev_codes)
     if df.empty:
         st.warning(T["no_syslog_range"])
     else:
-        df = df[df["message"].str.contains(
-            message_query, case=False, na=False)] if message_query else df
+        df = df[df["message"].str.contains(message_query, case=False, na=False)] if message_query else df
 
     if df.empty:
         st.info(T["no_syslog_filter"])
@@ -346,10 +462,8 @@ if dashboard_type == T["dash_syslog"]:
         st.markdown(f"### {T['events_over_time']}")
         df_chart = df.copy()
         df_chart["time_bucket"] = df_chart["timestamp"].dt.floor("1min")
-        chart_data = df_chart.groupby(
-            ["time_bucket", "severity_name"]).size().reset_index(name="count")
-        pivot = chart_data.pivot(
-            index="time_bucket", columns="severity_name", values="count").fillna(0)
+        chart_data = df_chart.groupby(["time_bucket", "severity_name"]).size().reset_index(name="count")
+        pivot = chart_data.pivot(index="time_bucket", columns="severity_name", values="count").fillna(0)
         st.line_chart(pivot)
 
         st.markdown(f"### {T['detailed_syslog']}")
@@ -360,31 +474,27 @@ if dashboard_type == T["dash_syslog"]:
         if host_filter:
             df_show = df_show[df_show["hostname"].isin(host_filter)]
         df_show = df_show.sort_values("timestamp", ascending=False)[
-            ["timestamp", "hostname", "host_ip",
-                "severity_code", "severity_name", "message"]
+            ["timestamp", "hostname", "host_ip", "severity_code", "severity_name", "message"]
         ]
         st.dataframe(df_show, use_container_width=True, height=500)
-        st.markdown(f"### {T['sev_chart_type']}")
-        chart_kind = st.radio("", [T["bar"], T["pie"]],
-                              horizontal=True, label_visibility="collapsed")
 
-        sev_dist = (
-            df.groupby("severity_name")
-              .size().reset_index(name="count")
-              .sort_values("count", ascending=False)
-        )
+        st.markdown(f"### {T['sev_chart_type']}")
+        chart_kind = st.radio("", [T["bar"], T["pie"]], horizontal=True, label_visibility="collapsed")
+        sev_dist = df.groupby("severity_name").size().reset_index(name="count").sort_values("count", ascending=False)
         if not sev_dist.empty:
             if chart_kind == T["bar"]:
                 st.bar_chart(sev_dist.set_index("severity_name")["count"])
             else:
-                fig = px.pie(sev_dist, names="severity_name",
-                             values="count", hole=0.25)
+                fig = px.pie(sev_dist, names="severity_name", values="count", hole=0.25)
                 st.plotly_chart(fig, use_container_width=True)
+
 # ========================
-# 5) Metrics dashboard
+# 5) Metrics dashboard (timeseries aggregations)
 # ========================
 elif dashboard_type == T["dash_metrics"]:
     st.subheader(T["metrics_header"])
+
+    # Dùng truy vấn doc-level để lấy thống kê tổng quan + disk snapshot
     dfm = query_metrics(time_range)
     if dfm.empty:
         st.warning(T["no_metric_range"])
@@ -394,62 +504,56 @@ elif dashboard_type == T["dash_metrics"]:
             hosts = dfm["hostname"].nunique()
             st.metric(T["num_hosts"], int(hosts))
         with col2:
-            avg_cpu = dfm["cpu_pct"].mean(
-            ) * 100 if dfm["cpu_pct"].notna().any() else None
-            st.metric(T["avg_cpu"],
-                      f"{avg_cpu:.1f}" if avg_cpu is not None else "N/A")
+            avg_cpu = dfm["cpu_pct"].mean() * 100 if dfm["cpu_pct"].notna().any() else None
+            st.metric(T["avg_cpu"], f"{avg_cpu:.1f}" if avg_cpu is not None else "N/A")
         with col3:
-            avg_mem = dfm["mem_used_pct"].mean(
-            ) * 100 if dfm["mem_used_pct"].notna().any() else None
-            st.metric(T["avg_mem"],
-                      f"{avg_mem:.1f}" if avg_mem is not None else "N/A")
+            avg_mem = dfm["mem_used_pct"].mean() * 100 if dfm["mem_used_pct"].notna().any() else None
+            st.metric(T["avg_mem"], f"{avg_mem:.1f}" if avg_mem is not None else "N/A")
 
         host_filter = st.multiselect(
             T["filter_by_host"], options=sorted(dfm["hostname"].dropna().unique()), default=None
         )
-        dfm_show = dfm if not host_filter else dfm[dfm["hostname"].isin(
-            host_filter)]
-
-        if dfm_show.empty:
-            st.info(T["no_metric_range"])
+        # ========== CPU timeseries ==========
+        cpu_ts = es_timeseries_avg(
+            index=METRIC_INDEX,
+            dataset="system.cpu",
+            field="system.cpu.total.norm.pct",
+            time_range_label=time_range,
+            interval="1m",
+        )
+        if host_filter:
+            cpu_ts = cpu_ts[[h for h in cpu_ts.columns if h in set(host_filter)]]
+        st.markdown("### CPU")
+        if cpu_ts.empty:
+            st.info(T["no_cpu"])
         else:
-            st.markdown("### CPU")
-            cpu_df = dfm_show[dfm_show["cpu_pct"].notna()].copy()
-            if not cpu_df.empty:
-                cpu_df["time_bucket"] = cpu_df["timestamp"].dt.floor("1min")
-                cpu_chart = cpu_df.groupby(["time_bucket", "hostname"])[
-                    "cpu_pct"].mean().reset_index()
-                pivot_cpu = cpu_chart.pivot(
-                    index="time_bucket", columns="hostname", values="cpu_pct")
-                st.line_chart(pivot_cpu)
-            else:
-                st.info(T["no_cpu"])
+            st.line_chart(cpu_ts * 100.0)
 
-            st.markdown(f"### {T['mem_over_time']}")
-            mem_df = dfm_show[dfm_show["mem_used_pct"].notna()].copy()
-            if not mem_df.empty:
-                mem_df["time_bucket"] = mem_df["timestamp"].dt.floor("1min")
-                mem_chart = mem_df.groupby(["time_bucket", "hostname"])[
-                    "mem_used_pct"].mean().reset_index()
-                pivot_mem = mem_chart.pivot(
-                    index="time_bucket", columns="hostname", values="mem_used_pct")
-                st.line_chart(pivot_mem)
-            else:
-                st.info(T["no_mem"])
+        # ========== Memory timeseries ==========
+        st.markdown(f"### {T['mem_over_time']}")
+        mem_ts = es_mem_timeseries(METRIC_INDEX, time_range, "1m")
+        if host_filter:
+            mem_ts = mem_ts[[h for h in mem_ts.columns if h in set(host_filter)]]
+        if mem_ts.empty:
+            st.info(T["no_mem"])
+        else:
+            st.line_chart(mem_ts * 100.0)
 
-            st.markdown(f"### {T['disk_latest']}")
-            disk_df = dfm_show[dfm_show["fs_used_pct"].notna()].copy()
-            if not disk_df.empty:
-                disk_df = disk_df.sort_values("timestamp").groupby(
-                    ["hostname", "fs_mount"], as_index=False
-                ).tail(1)
-                disk_df["fs_used_pct"] = disk_df["fs_used_pct"] * 100
-                disk_df = disk_df[["hostname", "host_ip", "fs_mount", "fs_used_pct"]].sort_values(
-                    "fs_used_pct", ascending=False
-                )
-                st.dataframe(disk_df, use_container_width=True, height=300)
-            else:
-                st.info(T["no_disk"])
+        # ========== Disk snapshot ==========
+        st.markdown(f"### {T['disk_latest']}")
+        dfm_show = dfm if not host_filter else dfm[dfm["hostname"].isin(host_filter)]
+        disk_df = dfm_show[dfm_show["fs_used_pct"].notna()].copy()
+        if not disk_df.empty:
+            disk_df = disk_df.sort_values("timestamp").groupby(
+                ["hostname", "fs_mount"], as_index=False
+            ).tail(1)
+            disk_df["fs_used_pct"] = disk_df["fs_used_pct"] * 100
+            disk_df = disk_df[
+                ["hostname", "host_ip", "fs_mount", "fs_used_pct"]
+            ].sort_values("fs_used_pct", ascending=False)
+            st.dataframe(disk_df, use_container_width=True, height=300)
+        else:
+            st.info(T["no_disk"])
 
 # ========================
 # 6) VyOS dashboard
@@ -459,8 +563,7 @@ elif dashboard_type == T["dash_vyos"]:
 
     keyword = st.sidebar.text_input(T["vyos_host_contains"], value="vyos")
     vyos_sev_choice = st.sidebar.selectbox(
-        T["vyos_sev_filter"], [T["vyos_sev_all"],
-                               T["vyos_sev_err"], T["vyos_sev_warn"]], index=0
+        T["vyos_sev_filter"], [T["vyos_sev_all"], T["vyos_sev_err"], T["vyos_sev_warn"]], index=0
     )
     if vyos_sev_choice == T["vyos_sev_all"]:
         sev_codes_vyos = None
@@ -473,8 +576,7 @@ elif dashboard_type == T["dash_vyos"]:
     if df_vyos.empty:
         st.warning(T["no_syslog_vyos_range"])
     else:
-        df_vyos = df_vyos[df_vyos["hostname"].str.contains(
-            keyword, case=False, na=False)]
+        df_vyos = df_vyos[df_vyos["hostname"].str.contains(keyword, case=False, na=False)]
         if df_vyos.empty:
             st.info(f"{T['no_vyos_host_msg']} '{keyword}'.")
         else:
@@ -485,24 +587,27 @@ elif dashboard_type == T["dash_vyos"]:
                 st.metric(T["vyos_hosts"], int(df_vyos["hostname"].nunique()))
 
             st.markdown(f"### {T['sev_dist']}")
-            sev_dist = df_vyos.groupby("severity_name").size().reset_index(name="count").sort_values(
-                "count", ascending=False
+            sev_dist = (
+                df_vyos.groupby("severity_name")
+                .size()
+                .reset_index(name="count")
+                .sort_values("count", ascending=False)
             )
             st.bar_chart(sev_dist.set_index("severity_name")["count"])
 
             st.markdown(f"### {T['vyos_over_time']}")
             vyos_chart = df_vyos.copy()
-            vyos_chart["time_bucket"] = vyos_chart["timestamp"].dt.floor(
-                "1min")
-            vyos_chart_data = vyos_chart.groupby(
-                ["time_bucket", "severity_name"]).size().reset_index(name="count")
+            vyos_chart["time_bucket"] = vyos_chart["timestamp"].dt.floor("1min")
+            vyos_chart_data = (
+                vyos_chart.groupby(["time_bucket", "severity_name"]).size().reset_index(name="count")
+            )
             vyos_pivot = vyos_chart_data.pivot(
-                index="time_bucket", columns="severity_name", values="count").fillna(0)
+                index="time_bucket", columns="severity_name", values="count"
+            ).fillna(0)
             st.line_chart(vyos_pivot)
 
             st.markdown(f"### {T['vyos_detail']}")
             df_vyos_show = df_vyos.sort_values("timestamp", ascending=False)[
-                ["timestamp", "hostname", "host_ip",
-                    "severity_code", "severity_name", "message"]
+                ["timestamp", "hostname", "host_ip", "severity_code", "severity_name", "message"]
             ]
             st.dataframe(df_vyos_show, use_container_width=True, height=500)
