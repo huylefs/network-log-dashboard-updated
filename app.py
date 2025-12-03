@@ -523,10 +523,22 @@ elif dashboard_type == T["dash_vyos"]:
         c1.metric(T["vyos_total"], len(dfv))
         c2.metric(T["vyos_hosts"], dfv["hostname"].nunique())
 
-        st.markdown(f"### {T['vyos_over_time']}")
-        dfv["time_bucket"] = dfv["timestamp"].dt.floor("1min")
-        chart = dfv.groupby(["time_bucket", "severity_name"]).size().reset_index(name="count")
-        st.line_chart(chart.pivot(index="time_bucket", columns="severity_name", values="count").fillna(0))
+        # Chia cột: Line Chart (2 phần) - Pie Chart (1 phần)
+        col_trend, col_dist = st.columns([2, 1])
+
+        with col_trend:
+            st.markdown(f"### {T['vyos_over_time']}")
+            dfv["time_bucket"] = dfv["timestamp"].dt.floor("1min")
+            chart = dfv.groupby(["time_bucket", "severity_name"]).size().reset_index(name="count")
+            st.line_chart(chart.pivot(index="time_bucket", columns="severity_name", values="count").fillna(0))
+        
+        with col_dist:
+            st.markdown(f"### {T['sev_chart_type']}")
+            sev_counts = dfv["severity_name"].value_counts().reset_index()
+            sev_counts.columns = ["Severity", "Count"]
+            # Vẽ biểu đồ tròn
+            fig = px.pie(sev_counts, values="Count", names="Severity", hole=0.4)
+            st.plotly_chart(fig, use_container_width=True)
 
         st.dataframe(
             dfv[["timestamp", "hostname", "severity_name", "message"]].sort_values("timestamp", ascending=False),
