@@ -449,7 +449,6 @@ elif dashboard_type == T["dash_security"]:
                         x="Hostname", 
                         y="Count", 
                         color="Hostname", # Mỗi host một màu
-                        text_auto=True    # Hiển thị số trên đầu cột
                     )
                     
                     # Ẩn legend nếu muốn gọn, hoặc để nguyên
