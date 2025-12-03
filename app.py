@@ -386,7 +386,7 @@ elif dashboard_type == T["dash_security"]:
     else:
         # Regex filters
         # Failed password
-        df_fail = dfs[dfs["message"].str.contains("Failed password", case=False, na=False)]
+        df_fail = dfs[dfs["message"].str.contains("authentication failure", case=False, na=False)]
         # Accepted password/publickey
         df_success = dfs[dfs["message"].str.contains("Accepted", case=False, na=False)]
         # Sudo usage
