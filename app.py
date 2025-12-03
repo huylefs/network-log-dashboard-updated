@@ -11,19 +11,13 @@ import re
 # ========================
 # 0) Elasticsearch config
 # ========================
-try:
-    ES_HOST = st.secrets["ES_HOST"]
-    ES_PORT = int(st.secrets.get("ES_PORT", 9243))
-    ES_USER = st.secrets["ES_USER"]
-    ES_PASS = st.secrets["ES_PASS"]
-    ES_SCHEME = st.secrets.get("ES_SCHEME", "https")
-except Exception:
-    # Fallback cho local testing (nếu không có secrets.toml)
-    ES_HOST = "localhost"
-    ES_PORT = 9200
-    ES_USER = "elastic"
-    ES_PASS = "changeme"
-    ES_SCHEME = "http"
+
+ES_HOST = st.secrets["ES_HOST"]
+ES_PORT = int(st.secrets.get("ES_PORT", 9243))
+ES_USER = st.secrets["ES_USER"]
+ES_PASS = st.secrets["ES_PASS"]
+ES_SCHEME = st.secrets.get("ES_SCHEME", "https")
+
 
 SYSLOG_INDEX = "syslog-*"
 METRIC_INDEX = "metricbeat-*"
@@ -175,7 +169,7 @@ def get_time_range_gte(label: str) -> str:
 # ========================
 
 
-def query_syslog(time_range_label: str, severity_codes=None, size: int = 1000) -> pd.DataFrame:
+def query_syslog(time_range_label: str, severity_codes=None, size: int = 2000) -> pd.DataFrame:
     gte = get_time_range_gte(time_range_label)
     must_filters = [{"range": {"@timestamp": {"gte": gte, "lte": "now"}}}]
     if severity_codes:
