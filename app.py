@@ -98,7 +98,7 @@ LANGS = {
         "select_dashboard": "Chọn bảng điều khiển",
 
         # MENU ITEMS
-        "dash_status": "Thông số",
+        "dash_status": "Thông số hệ thống",
         "dash_security": "Bảo mật (SSH)",
         "dash_syslog": "Nhật ký Syslog",
         "dash_vyos": "Thiết bị mạng (VyOS)",
@@ -132,19 +132,18 @@ LANGS = {
         "vyos_total": "Tổng sự kiện VyOS",
         "vyos_hosts": "Số lượng host VyOS",
         "vyos_over_time": "Sự kiện VyOS theo thời gian",
-        "sev_chart_type": "Kiểu biểu đồ Severity",
+        "sev_chart_type": "Sự kiện theo mức Severity",
         "pie": "Tròn (Pie)",
         "bar": "Cột (Bar)",
 
         # STATUS & TRENDS KEYS
         "status_board": "Bảng trạng thái sức khỏe hệ thống",
-        "trends_header": "Biểu đồ xu hướng (CPU & Bộ nhớ)",
+        "trends_header": "CPU & Bộ nhớ",
         "select_host_viz": "Chọn host để xem biểu đồ",
 
         # SECURITY KEYS
         "sec_failed": "Đăng nhập thất bại (Failed)",
-        "sec_accepted": "Đăng nhập thành công",
-        "sec_users": "Top Host có sự kiện bảo mật",
+        "sec_users": "Các Host có sự kiện bảo mật",
     },
 }
 
