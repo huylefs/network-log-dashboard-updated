@@ -5,8 +5,6 @@ from elasticsearch import Elasticsearch
 import time
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
-import re
 
 # ========================
 # 0) Elasticsearch config
@@ -30,7 +28,7 @@ es = Elasticsearch(
 )
 
 # ========================
-# 1) I18N (EN/VI)
+# 1) (EN/VI)
 # ========================
 LANGS = {
     "en": {
@@ -149,11 +147,10 @@ LANGS = {
         "select_host_viz": "Chọn host để xem biểu đồ",
         "cpu_usage": "Mức sử dụng CPU (%)",
         "mem_usage": "Mức sử dụng bộ nhớ (%)",
-        "select_host_trend_info": "Chọn ít nhất một host để xem biểu đồ xu hướng.",
+        "select_host_trend_info": "Chọn ít nhất một host để xem biểu đồ.",
 
         # SECURITY KEYS
         "sec_failed": "Đăng nhập thất bại",
-        "sec_accepted": "Đăng nhập thành công",
         "sec_users": "Các Host đăng nhập thất bại",
         "sec_recent_failed": "Các lần đăng nhập thất bại gần đây",
         "sec_no_failed_detected": "Không phát hiện lần đăng nhập thất bại nào.",
@@ -227,7 +224,6 @@ def query_syslog(time_range_label: str, severity_codes=None, size: int = 2000) -
 
 
 def query_metrics(time_range_label: str, size: int = 2000) -> pd.DataFrame:
-    # Hàm này vẫn cần thiết để lấy dữ liệu cho Dashboard Status
     gte = get_time_range_gte(time_range_label)
     body = {
         "size": size,
@@ -283,11 +279,10 @@ T = LANGS[LANG]
 st.title(T["title"])
 st.caption(T["caption"])
 
-# Chọn Dashboard - Đã loại bỏ "Raw Metrics" và "Host Details"
 dashboard_type = st.sidebar.radio(
     T["select_dashboard"],
     [
-        T["dash_status"],       # Enhanced: Table + Charts
+        T["dash_status"],       
         T["dash_security"],
         T["dash_syslog"],
         T["dash_vyos"]
@@ -312,13 +307,12 @@ if dashboard_type == T["dash_status"]:
     if dfm.empty:
         st.warning(T["no_metric_range"])
     else:
-        # --- PHẦN 1: BẢNG TRẠNG THÁI (TABLE) ---
-        # Tính toán thống kê cho từng Host
+
         host_stats = dfm.groupby("hostname").agg({
-            "timestamp": "max",             # Lấy thời gian cập nhật cuối cùng
+            "timestamp": "max",             
             "host_ip": "first",
-            "cpu_pct": "mean",              # Trung bình cho Table
-            "mem_used_pct": "mean"          # Trung bình cho Table
+            "cpu_pct": "mean",              
+            "mem_used_pct": "mean"          
         }).reset_index()
 
         # Lấy thông tin Disk Root mới nhất
@@ -382,7 +376,7 @@ if dashboard_type == T["dash_status"]:
         st.divider()
         st.subheader(T["trends_header"])
 
-        # Multiselect để chọn host cần vẽ
+
         all_hosts = sorted(dfm["hostname"].unique())
         selected_hosts = st.multiselect(
             T["select_host_viz"], all_hosts, default=all_hosts)
@@ -392,7 +386,7 @@ if dashboard_type == T["dash_status"]:
             dfm_chart = dfm[dfm["hostname"].isin(selected_hosts)].copy()
 
             if not dfm_chart.empty:
-                # Làm tròn thời gian về phút để biểu đồ mượt hơn
+ 
                 dfm_chart["time_bucket"] = dfm_chart["timestamp"].dt.floor(
                     "1min")
 
@@ -507,7 +501,7 @@ elif dashboard_type == T["dash_syslog"]:
         c2.metric(T["error_events"], int((df["severity_code"] <= 3).sum()))
         c3.metric(T["hosts_with_events"], df["hostname"].nunique())
 
-        # Update Layout to include Pie Chart next to Line Chart
+
         col_trend, col_dist = st.columns([2, 1])
 
         with col_trend:
@@ -576,7 +570,7 @@ elif dashboard_type == T["dash_vyos"]:
         c1.metric(T["vyos_total"], len(dfv))
         c2.metric(T["vyos_hosts"], dfv["hostname"].nunique())
 
-        # Line Chart (Biểu đồ đường) nằm trên
+        # Line Chart (Biểu đồ đường) 
         st.markdown(f"### {T['vyos_over_time']}")
         dfv["time_bucket"] = dfv["timestamp"].dt.floor("1min")
         chart = dfv.groupby(["time_bucket", "severity_name"]
@@ -584,7 +578,7 @@ elif dashboard_type == T["dash_vyos"]:
         st.line_chart(chart.pivot(index="time_bucket",
                       columns="severity_name", values="count").fillna(0))
 
-        # Pie Chart (Biểu đồ tròn) nằm dưới
+        # Pie Chart (Biểu đồ tròn) 
         st.markdown(f"### {T['sev_chart_type']}")
         sev_counts = dfv["severity_name"].value_counts().reset_index()
         sev_counts.columns = ["Severity", "Count"]
