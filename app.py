@@ -397,8 +397,8 @@ elif dashboard_type == T["dash_security"]:
         st.warning(T["no_syslog_range"])
     else:
         # Lọc các log liên quan đến bảo mật (Bỏ phần sudo theo yêu cầu)
-        df_fail = dfs[dfs["message"].str.contains("failure|Failed", case=False, na=False)]
-        df_success = dfs[dfs["message"].str.contains("Accepted|session opened", case=False, na=False)]
+        df_fail = dfs[dfs["message"].str.contains("authentication failure", case=False, na=False)]
+        df_success = dfs[dfs["message"].str.contains("session opened", case=False, na=False)]
 
         # Chỉ hiển thị 2 cột Metric (Failed và Accepted)
         c1, c2 = st.columns(2)
@@ -430,9 +430,6 @@ elif dashboard_type == T["dash_security"]:
                 if match_ruser: return match_ruser.group(1)
 
                 # 3. SSH Text format (for <user> from)
-                match_ssh = re.search(r"for\s+(?:invalid user\s+)?(\S+)", msg)
-                if match_ssh and "from" in msg:
-                    return match_ssh.group(1)
                     
                 return "unknown"
 
