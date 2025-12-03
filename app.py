@@ -421,7 +421,7 @@ if dashboard_type == T["dash_status"]:
 # ========================
 # 5) Security Dashboard
 # ========================
-elif dashboard_type == T["dash_security"]]:
+elif dashboard_type == T["dash_security"]:
     st.subheader(T["dash_security"])
     dfs = query_syslog(time_range, size=1000)
 
