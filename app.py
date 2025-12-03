@@ -437,33 +437,26 @@ elif dashboard_type == T["dash_security"]:
             df_interest = pd.concat([df_fail, df_success])
             
             if not df_interest.empty:
-                df_interest["extracted_user"] = df_interest["message"].apply(extract_user)
+                # --- THAY ĐỔI LOGIC TẠI ĐÂY ---
+                # Thay vì extract user từ message, ta đếm trực tiếp hostname
+                host_counts = df_interest["hostname"].value_counts().reset_index()
+                host_counts.columns = ["Hostname", "Count"]
                 
-                # Lọc user hợp lệ
-                user_counts = df_interest[
-                    (df_interest["extracted_user"] != "unknown") & 
-                    (df_interest["extracted_user"] != "")
-                ]["extracted_user"].value_counts().reset_index()
-                
-                user_counts.columns = ["User", "Count"]
-                
-                if not user_counts.empty:
-                    # UPDATED CHART:
-                    # x="User", y="Count" -> Cột đứng
-                    # color="User" -> Mỗi user một màu khác nhau
+                if not host_counts.empty:
+                    # Vẽ biểu đồ cột đứng, màu theo Hostname
                     fig = px.bar(
-                        user_counts.head(10), 
-                        x="User", 
+                        host_counts.head(10), 
+                        x="Hostname", 
                         y="Count", 
-                        color="User", 
-                        text_auto=True # Hiển thị số trên đầu cột
+                        color="Hostname", # Mỗi host một màu
+                        text_auto=True    # Hiển thị số trên đầu cột
                     )
                     
-                    # Tắt legend nếu thấy rối (hoặc để mặc định)
+                    # Ẩn legend nếu muốn gọn, hoặc để nguyên
                     fig.update_layout(showlegend=False)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.info("No usernames extracted.")
+                    st.info("No hosts found.")
             else:
                 st.info("No data.")
 # ========================
