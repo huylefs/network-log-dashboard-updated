@@ -5,11 +5,11 @@ from elasticsearch import Elasticsearch
 import time
 import numpy as np
 import plotly.express as px
+import re
 
 # ========================
 # 0) Elasticsearch config
 # ========================
-# Bạn có thể thay thế st.secrets bằng os.getenv hoặc hardcode nếu chạy local test
 
 ES_HOST = st.secrets["ES_HOST"]
 ES_PORT = int(st.secrets.get("ES_PORT", 9243))
@@ -21,11 +21,10 @@ ES_SCHEME = st.secrets.get("ES_SCHEME", "https")
 SYSLOG_INDEX = "syslog-*"
 METRIC_INDEX = "metricbeat-*"
 
-# Khởi tạo kết nối ES
 es = Elasticsearch(
     hosts=[{"host": ES_HOST, "port": ES_PORT, "scheme": ES_SCHEME}],
     basic_auth=(ES_USER, ES_PASS),
-    verify_certs=False, # Lưu ý: Set True nếu dùng Production có SSL hợp lệ
+    verify_certs=False,
     ssl_show_warn=False
 )
 
@@ -36,13 +35,17 @@ LANGS = {
     "en": {
         "page_title": "Network Log Dashboard",
         "title": "Network Monitoring Dashboard",
-        "caption": "Built with Streamlit + Elasticsearch + Anomaly Detection",
+        "caption": "Built with Streamlit + Elasticsearch",
         "controls": "Controls",
         "select_dashboard": "Select dashboard",
+        # MENU ITEMS
         "dash_syslog": "Syslog Logs",
         "dash_metrics": "Metrics (CPU/RAM/Disk)",
         "dash_vyos": "Network Devices (VyOS)",
-        "host_details": "Host Details & Drill-down",  # NEW
+        "host_details": "Host Details & Drill-down",
+        "dash_security": "Security Audit (SSH/Sudo)",   # NEW
+        "dash_status": "Inventory Status Board",        # NEW
+        
         "time_range": "Time range",
         "ranges": ["Last 15 minutes", "Last 1 hour", "Last 6 hours", "Last 24 hours"],
         "refresh": "Refresh data",
@@ -87,7 +90,6 @@ LANGS = {
         "sev_chart_type": "Severity chart",
         "pie": "Pie",
         "bar": "Bar",
-        # NEW KEYS FOR HOST DETAILS
         "select_host": "Select specific host",
         "last_logs": "Latest Logs for this Host",
         "cpu_mem_for_host": "CPU/Memory History & Anomaly",
@@ -95,6 +97,13 @@ LANGS = {
         "spike_table": "Detected Spikes (CPU > 2 StdDev)",
         "no_data_host": "No data found for this host.",
         "current_status": "Current Status",
+        # SECURITY & STATUS KEYS
+        "sec_failed": "Failed Login Attempts",
+        "sec_sudo": "Sudo Usage",
+        "sec_accepted": "Accepted Logins",
+        "sec_users": "Top Users Targeted",
+        "status_board": "System Health Status",
+        "status_legend": "Legend: CPU > 90%, Mem > 75%, Disk > 95% -> RED",
     },
     "vi": {
         "page_title": "Bảng điều khiển Log Mạng",
@@ -102,10 +111,14 @@ LANGS = {
         "caption": "Xây dựng bằng Streamlit + Elasticsearch + Anomaly Detection",
         "controls": "Điều khiển",
         "select_dashboard": "Chọn bảng điều khiển",
+        # MENU ITEMS
         "dash_syslog": "Nhật ký Syslog",
         "dash_metrics": "Chỉ số (CPU/RAM/Disk)",
         "dash_vyos": "Thiết bị mạng (VyOS)",
-        "host_details": "Chi tiết Host & Phân tích", # NEW
+        "host_details": "Chi tiết Host & Phân tích",
+        "dash_security": "Bảo mật (SSH/Sudo)",          # NEW
+        "dash_status": "Trạng thái hệ thống (Status)",  # NEW
+
         "time_range": "Khoảng thời gian",
         "ranges": ["15 phút gần nhất", "1 giờ gần nhất", "6 giờ gần nhất", "24 giờ gần nhất"],
         "refresh": "Tải lại dữ liệu",
@@ -150,7 +163,6 @@ LANGS = {
         "sev_chart_type": "Kiểu biểu đồ Severity",
         "pie": "Tròn (Pie)",
         "bar": "Cột (Bar)",
-        # NEW KEYS FOR HOST DETAILS
         "select_host": "Chọn Host cụ thể",
         "last_logs": "Nhật ký mới nhất của Host này",
         "cpu_mem_for_host": "Lịch sử CPU/Bộ nhớ & Bất thường",
@@ -158,6 +170,13 @@ LANGS = {
         "spike_table": "Các điểm đột biến (CPU > 2 độ lệch chuẩn)",
         "no_data_host": "Không tìm thấy dữ liệu cho host này.",
         "current_status": "Trạng thái hiện tại",
+        # SECURITY & STATUS KEYS
+        "sec_failed": "Đăng nhập thất bại (Failed)",
+        "sec_sudo": "Sử dụng Sudo",
+        "sec_accepted": "Đăng nhập thành công",
+        "sec_users": "Top User bị tấn công/hoạt động",
+        "status_board": "Bảng trạng thái sức khỏe hệ thống",
+        "status_legend": "Chú thích: CPU > 90%, RAM > 75%, Disk > 95% -> ĐỎ",
     },
 }
 
@@ -172,7 +191,7 @@ def get_time_range_gte(label: str) -> str:
 # 2) Queries
 # ========================
 
-def query_syslog(time_range_label: str, severity_codes=None, size: int = 500) -> pd.DataFrame:
+def query_syslog(time_range_label: str, severity_codes=None, size: int = 1000) -> pd.DataFrame:
     gte = get_time_range_gte(time_range_label)
     must_filters = [{"range": {"@timestamp": {"gte": gte, "lte": "now"}}}]
     if severity_codes:
@@ -214,7 +233,7 @@ def query_syslog(time_range_label: str, severity_codes=None, size: int = 500) ->
         df["timestamp"] = pd.to_datetime(df["timestamp"])
     return df
 
-def query_metrics(time_range_label: str, size: int = 1000) -> pd.DataFrame:
+def query_metrics(time_range_label: str, size: int = 2000) -> pd.DataFrame:
     gte = get_time_range_gte(time_range_label)
     body = {
         "size": size,
@@ -268,10 +287,17 @@ T = LANGS[LANG]
 st.title(T["title"])
 st.caption(T["caption"])
 
-# Chọn Dashboard (Thêm Host Details vào đây)
+# Chọn Dashboard
 dashboard_type = st.sidebar.radio(
     T["select_dashboard"],
-    [T["dash_syslog"], T["dash_metrics"], T["dash_vyos"], T["host_details"]],
+    [
+        T["dash_status"],       # NEW: Status Board
+        T["dash_security"],     # NEW: Security
+        T["host_details"],      # Drill-down
+        T["dash_syslog"], 
+        T["dash_metrics"], 
+        T["dash_vyos"]
+    ],
     index=0,
 )
 
@@ -281,9 +307,135 @@ if st.sidebar.button(T["refresh"]):
     st.cache_data.clear()
 
 # ========================
-# 4) Syslog Dashboard
+# 4) Status Board (NEW)
 # ========================
-if dashboard_type == T["dash_syslog"]:
+if dashboard_type == T["dash_status"]:
+    st.subheader(T["status_board"])
+    st.info(T["status_legend"])
+
+    dfm = query_metrics(time_range, size=2000)
+    
+    if dfm.empty:
+        st.warning(T["no_metric_range"])
+    else:
+        # Lấy bản ghi mới nhất của từng Host
+        latest_df = dfm.sort_values("timestamp").groupby("hostname").tail(1).copy()
+        
+        # Lấy thông tin Disk max usage của từng Host (vì 1 host có nhiều partition)
+        disk_max = dfm.groupby("hostname")["fs_used_pct"].max().reset_index()
+        disk_max.columns = ["hostname", "max_disk_usage"]
+
+        # Merge lại
+        final_view = pd.merge(latest_df, disk_max, on="hostname", how="left")
+        
+        # Chọn các cột hiển thị
+        display_df = final_view[[
+            "hostname", "host_ip", "timestamp", 
+            "cpu_pct", "mem_used_pct", "max_disk_usage"
+        ]].copy()
+
+        # Chuyển đổi sang %
+        display_df["cpu_pct"] = (display_df["cpu_pct"] * 100).round(1)
+        display_df["mem_used_pct"] = (display_df["mem_used_pct"] * 100).round(1)
+        display_df["max_disk_usage"] = (display_df["max_disk_usage"] * 100).round(1)
+
+        # Đổi tên cột cho đẹp
+        display_df.columns = ["Hostname", "IP", "Last Seen", "CPU %", "Mem %", "Max Disk %"]
+
+        # Hàm tô màu
+        def style_status(row):
+            cpu = row["CPU %"]
+            mem = row["Mem %"]
+            disk = row["Max Disk %"]
+            
+            styles = [''] * len(row)
+            
+            # CPU > 90% -> Red
+            if cpu > 90:
+                styles[3] = 'background-color: #ffcccc; color: red; font-weight: bold;'
+            
+            # Mem > 75% -> Red (YÊU CẦU CỦA USER)
+            if mem > 75:
+                styles[4] = 'background-color: #ffcccc; color: red; font-weight: bold;'
+            
+            # Disk > 95% -> Red
+            if disk > 95:
+                styles[5] = 'background-color: #ffcccc; color: red; font-weight: bold;'
+            
+            return styles
+
+        st.dataframe(
+            display_df.style.apply(style_status, axis=1).format({
+                "Last Seen": lambda t: t.strftime("%Y-%m-%d %H:%M:%S")
+            }),
+            use_container_width=True,
+            height=600
+        )
+
+# ========================
+# 5) Security Dashboard (NEW)
+# ========================
+elif dashboard_type == T["dash_security"]:
+    st.subheader(T["dash_security"])
+    
+    # Query syslog, không lọc severity để lấy hết info login
+    dfs = query_syslog(time_range, size=1000)
+    
+    if dfs.empty:
+        st.warning(T["no_syslog_range"])
+    else:
+        # Regex filters
+        # Failed password
+        df_fail = dfs[dfs["message"].str.contains("Failed password", case=False, na=False)]
+        # Accepted password/publickey
+        df_success = dfs[dfs["message"].str.contains("Accepted", case=False, na=False)]
+        # Sudo usage
+        df_sudo = dfs[dfs["message"].str.contains("sudo", case=False, na=False)]
+
+        # KPI Cards
+        c1, c2, c3 = st.columns(3)
+        c1.metric(T["sec_failed"], len(df_fail), delta_color="inverse")
+        c2.metric(T["sec_accepted"], len(df_success))
+        c3.metric(T["sec_sudo"], len(df_sudo))
+
+        col_main, col_users = st.columns([2, 1])
+
+        with col_main:
+            st.markdown("#### Recent Failed Logins")
+            if not df_fail.empty:
+                st.dataframe(df_fail[["timestamp", "hostname", "message"]], use_container_width=True, height=300)
+            else:
+                st.success("No failed login attempts detected.")
+
+        with col_users:
+            st.markdown(f"#### {T['sec_users']}")
+            # Thử trích xuất User từ message logs (thường là 'for <user> from')
+            # Pattern đơn giản: "for (invalid user )?(\w+)"
+            def extract_user(msg):
+                match = re.search(r"for\s+(?:invalid user\s+)?(\w+)", msg)
+                return match.group(1) if match else "unknown"
+
+            # Kết hợp cả fail và success để xem user nào được quan tâm nhất
+            df_interest = pd.concat([df_fail, df_success])
+            if not df_interest.empty:
+                df_interest["extracted_user"] = df_interest["message"].apply(extract_user)
+                user_counts = df_interest["extracted_user"].value_counts().reset_index()
+                user_counts.columns = ["User", "Count"]
+                user_counts = user_counts[user_counts["User"] != "unknown"]
+                
+                if not user_counts.empty:
+                    st.dataframe(user_counts, use_container_width=True)
+                    fig = px.bar(user_counts.head(10), x="Count", y="User", orientation='h')
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Could not extract usernames.")
+            else:
+                st.info("No data.")
+
+# ========================
+# 6) Syslog Dashboard (Old)
+# ========================
+elif dashboard_type == T["dash_syslog"]:
     st.subheader(T["dash_syslog"])
     
     sev_opts = {
@@ -304,20 +456,17 @@ if dashboard_type == T["dash_syslog"]:
     if df.empty:
         st.warning(T["no_syslog_range"] if not message_query else T["no_syslog_filter"])
     else:
-        # Metrics Cards
         c1, c2, c3 = st.columns(3)
         c1.metric(T["total_events"], len(df))
         c2.metric(T["error_events"], int((df["severity_code"] <= 3).sum()))
         c3.metric(T["hosts_with_events"], df["hostname"].nunique())
 
-        # Line Chart
         st.markdown(f"### {T['events_over_time']}")
         df_chart = df.copy()
         df_chart["time_bucket"] = df_chart["timestamp"].dt.floor("1min")
         chart_data = df_chart.groupby(["time_bucket", "severity_name"]).size().reset_index(name="count")
         st.line_chart(chart_data.pivot(index="time_bucket", columns="severity_name", values="count").fillna(0))
 
-        # Main Table
         st.markdown(f"### {T['detailed_syslog']}")
         host_filter = st.multiselect(T["filter_by_host"], options=sorted(df["hostname"].dropna().unique()))
         if host_filter:
@@ -328,19 +477,8 @@ if dashboard_type == T["dash_syslog"]:
             use_container_width=True, height=400
         )
 
-        # Distribution Chart
-        st.markdown(f"### {T['sev_chart_type']}")
-        c_type = st.radio("Chart Type", [T["bar"], T["pie"]], horizontal=True, label_visibility="collapsed")
-        sev_dist = df.groupby("severity_name").size().reset_index(name="count")
-        
-        if c_type == T["bar"]:
-            st.bar_chart(sev_dist.set_index("severity_name"))
-        else:
-            fig = px.pie(sev_dist, names="severity_name", values="count", hole=0.3)
-            st.plotly_chart(fig, use_container_width=True)
-
 # ========================
-# 5) Metrics Dashboard
+# 7) Metrics Dashboard (Old)
 # ========================
 elif dashboard_type == T["dash_metrics"]:
     st.subheader(T["metrics_header"])
@@ -349,7 +487,6 @@ elif dashboard_type == T["dash_metrics"]:
     if dfm.empty:
         st.warning(T["no_metric_range"])
     else:
-        # KPI Cards
         c1, c2, c3 = st.columns(3)
         c1.metric(T["num_hosts"], dfm["hostname"].nunique())
         
@@ -359,29 +496,23 @@ elif dashboard_type == T["dash_metrics"]:
         avg_mem = dfm["mem_used_pct"].mean() * 100 if dfm["mem_used_pct"].notna().any() else 0
         c3.metric(T["avg_mem"], f"{avg_mem:.1f}")
 
-        # Filter
         host_filter = st.multiselect(T["filter_by_host"], options=sorted(dfm["hostname"].dropna().unique()))
         if host_filter:
             dfm = dfm[dfm["hostname"].isin(host_filter)]
 
-        # CPU & Mem Charts
         st.markdown("### CPU (%)")
         if not dfm.empty:
             dfm["time_bucket"] = dfm["timestamp"].dt.floor("1min")
             
-            # CPU
             cpu_pivot = dfm.groupby(["time_bucket", "hostname"])["cpu_pct"].mean().reset_index()
             st.line_chart(cpu_pivot.pivot(index="time_bucket", columns="hostname", values="cpu_pct"))
 
-            # Mem
             st.markdown(f"### {T['mem_over_time']}")
             mem_pivot = dfm.groupby(["time_bucket", "hostname"])["mem_used_pct"].mean().reset_index()
             st.line_chart(mem_pivot.pivot(index="time_bucket", columns="hostname", values="mem_used_pct"))
 
-            # Disk
             st.markdown(f"### {T['disk_latest']}")
             disk_df = dfm[dfm["fs_used_pct"].notna()].sort_values("timestamp")
-            # Lấy bản ghi cuối cùng của mỗi mount point
             disk_latest = disk_df.groupby(["hostname", "fs_mount"]).tail(1).copy()
             disk_latest["fs_used_pct"] = (disk_latest["fs_used_pct"] * 100).round(1)
             
@@ -391,7 +522,7 @@ elif dashboard_type == T["dash_metrics"]:
             )
 
 # ========================
-# 6) VyOS Dashboard
+# 8) VyOS Dashboard (Old)
 # ========================
 elif dashboard_type == T["dash_vyos"]:
     st.subheader(T["vyos_header"])
@@ -425,12 +556,11 @@ elif dashboard_type == T["dash_vyos"]:
         )
 
 # ========================
-# 7) Host Details & Anomaly (NEW)
+# 9) Host Details & Anomaly
 # ========================
 elif dashboard_type == T["host_details"]:
     st.subheader(T["host_details"])
 
-    # 7.1 Lấy danh sách Host nhanh bằng Aggregation
     aggs_body = {
         "size": 0,
         "aggs": {
@@ -445,15 +575,13 @@ elif dashboard_type == T["host_details"]:
         buckets = res_hosts.get("aggregations", {}).get("unique_hosts", {}).get("buckets", [])
         host_list = [b["key"] for b in buckets]
     except Exception:
-        pass # Fail silently, list rỗng
+        pass
 
     if not host_list:
         st.warning(T["no_metric_range"])
     else:
         selected_host = st.selectbox(T["select_host"], sorted(host_list))
         
-        # 7.2 Query dữ liệu riêng cho host này
-        # Tăng size lên 2000 để vẽ chart mượt hơn
         dfm_host = query_metrics(time_range, size=2000)
         dfm_host = dfm_host[dfm_host["hostname"] == selected_host] if not dfm_host.empty else pd.DataFrame()
 
@@ -463,11 +591,9 @@ elif dashboard_type == T["host_details"]:
         if dfm_host.empty and dfs_host.empty:
             st.info(T["no_data_host"])
         else:
-            # 7.3 Hiện chỉ số hiện tại (Status Board mini)
             st.markdown(f"##### {T['current_status']}")
             c1, c2, c3 = st.columns(3)
             
-            # Lấy giá trị mới nhất
             latest_metrics = dfm_host.sort_values("timestamp").iloc[-1] if not dfm_host.empty else None
             
             cpu_curr = f"{latest_metrics['cpu_pct']*100:.1f}%" if latest_metrics is not None and pd.notna(latest_metrics['cpu_pct']) else "N/A"
@@ -476,37 +602,29 @@ elif dashboard_type == T["host_details"]:
 
             c1.metric("Current CPU", cpu_curr)
             c2.metric("Current Memory", mem_curr)
-            c3.metric("Log Count (Selected Range)", log_count)
+            c3.metric("Log Count", log_count)
             
             st.divider()
 
-            # 7.4 Anomaly Detection & Chart
             st.markdown(f"### {T['cpu_mem_for_host']}")
             
             if not dfm_host.empty:
-                # Resample để tính toán
                 df_resampled = dfm_host.set_index("timestamp").sort_index()
-                # Chỉ lấy cột số, nhóm theo 1 phút
                 df_resampled = df_resampled[["cpu_pct", "mem_used_pct"]].resample("1min").mean().fillna(0)
 
-                # Z-Score Logic
                 cpu_mean = df_resampled["cpu_pct"].mean()
                 cpu_std = df_resampled["cpu_pct"].std()
                 
-                # Tránh chia cho 0
                 if cpu_std > 0:
                     df_resampled["z_score"] = (df_resampled["cpu_pct"] - cpu_mean) / cpu_std
                 else:
                     df_resampled["z_score"] = 0
                 
-                # Ngưỡng phát hiện bất thường (Z > 2.0)
                 anomalies = df_resampled[df_resampled["z_score"] > 2.0].copy()
                 
-                # Hiển thị Chart và Bảng Bất thường
                 col_chart, col_anom = st.columns([3, 1])
                 
                 with col_chart:
-                    # Scale lên % để vẽ
                     chart_df = df_resampled[["cpu_pct", "mem_used_pct"]] * 100
                     st.line_chart(chart_df)
                 
@@ -514,7 +632,6 @@ elif dashboard_type == T["host_details"]:
                     st.write(f"**{T['anomaly']}**")
                     if not anomalies.empty:
                         st.error(f"Found {len(anomalies)} spikes!")
-                        # Format lại hiển thị
                         anom_display = (anomalies[["cpu_pct"]] * 100).rename(columns={"cpu_pct": "CPU %"})
                         st.dataframe(anom_display, height=200)
                     else:
@@ -522,13 +639,8 @@ elif dashboard_type == T["host_details"]:
             
             st.divider()
 
-            # 7.5 Log Detail của Host
             st.markdown(f"### {T['last_logs']}")
             if not dfs_host.empty:
-                # Tô màu bảng log
-                def highlight_sev(s):
-                    return ['color: red; font-weight: bold' if v in ['Critical', 'Error'] else '' for v in s]
-                
                 st.dataframe(
                     dfs_host[["timestamp", "severity_name", "message"]]
                     .sort_values("timestamp", ascending=False)
