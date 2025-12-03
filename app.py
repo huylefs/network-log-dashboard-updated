@@ -314,7 +314,6 @@ if st.sidebar.button(T["refresh"]):
 # ========================
 if dashboard_type == T["dash_status"]:
     st.subheader(T["status_board"])
-    st.info(T["status_legend"] + " (Mount point: /)")
 
     # Lấy dữ liệu metric
     dfm = query_metrics(time_range, size=3000)
