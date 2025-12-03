@@ -386,6 +386,9 @@ if dashboard_type == T["dash_status"]:
 # ========================
 # 5) Security Dashboard (NEW)
 # ========================
+# ========================
+# 5) Security Dashboard (UPDATED: No Sudo, Vertical Colorful Bars)
+# ========================
 elif dashboard_type == T["dash_security"]:
     st.subheader(T["dash_security"])
     dfs = query_syslog(time_range, size=1000)
@@ -393,62 +396,53 @@ elif dashboard_type == T["dash_security"]:
     if dfs.empty:
         st.warning(T["no_syslog_range"])
     else:
-        # Lọc các log liên quan đến bảo mật
-        # authentication failure: log thất bại
-        # Accepted: log thành công (thường là SSH)
-        # sudo: log lệnh sudo
-        
-        # Regex đơn giản hóa filter để bắt được nhiều trường hợp hơn
+        # Lọc các log liên quan đến bảo mật (Bỏ phần sudo theo yêu cầu)
         df_fail = dfs[dfs["message"].str.contains("failure|Failed", case=False, na=False)]
         df_success = dfs[dfs["message"].str.contains("Accepted|session opened", case=False, na=False)]
-        df_sudo = dfs[dfs["message"].str.contains("sudo", case=False, na=False)]
 
-        c1, c2, c3 = st.columns(3)
+        # Chỉ hiển thị 2 cột Metric (Failed và Accepted)
+        c1, c2 = st.columns(2)
         c1.metric(T["sec_failed"], len(df_fail), delta_color="inverse")
         c2.metric(T["sec_accepted"], len(df_success))
-        c3.metric(T["sec_sudo"], len(df_sudo))
 
         col_main, col_users = st.columns([2, 1])
 
         with col_main:
             st.markdown("#### Recent Failed Logins")
             if not df_fail.empty:
-                st.dataframe(df_fail[["timestamp", "hostname", "message"]], use_container_width=True, height=300)
+                st.dataframe(df_fail[["timestamp", "hostname", "message"]], use_container_width=True, height=400)
             else:
                 st.success("No failed login attempts detected.")
 
         with col_users:
             st.markdown(f"#### {T['sec_users']}")
             
-            # --- HÀM EXTRACT ĐÃ ĐƯỢC CHỈNH SỬA ĐƠN GIẢN HÓA ---
+            # Hàm trích xuất User (Giữ nguyên logic tốt nhất đã chốt)
             def extract_user(msg):
                 if not isinstance(msg, str): return "unknown"
                 
-                # 1. Ưu tiên format Key-Value như mẫu bạn gửi (user=huyle203)
-                # \buser= : Tìm chữ "user=" đứng độc lập (tránh nhầm với ruser=)
-                # (\S+)   : Lấy chuỗi ký tự liền sau (không chứa khoảng trắng)
+                # 1. Key-Value format (user=...)
                 match_kv = re.search(r"\buser=(\S+)", msg)
-                if match_kv:
-                    return match_kv.group(1)
+                if match_kv: return match_kv.group(1)
 
-                # 2. Fallback: Nếu log không có user=..., thử tìm ruser= (remote user)
+                # 2. Key-Value format (ruser=...)
                 match_ruser = re.search(r"\bruser=(\S+)", msg)
-                if match_ruser:
-                    return match_ruser.group(1)
+                if match_ruser: return match_ruser.group(1)
 
-                # 3. Fallback cuối: Cho log SSH cũ kiểu text (Accepted for root...)
+                # 3. SSH Text format (for <user> from)
                 match_ssh = re.search(r"for\s+(?:invalid user\s+)?(\S+)", msg)
-                if match_ssh and "from" in msg: # Chỉ lấy nếu câu có chữ "from" để chắc chắn
+                if match_ssh and "from" in msg:
                     return match_ssh.group(1)
                     
                 return "unknown"
-            # --------------------------------------------------
 
-            df_interest = pd.concat([df_fail, df_success, df_sudo]) # Gộp cả sudo để xem ai hay gõ lệnh
+            # Chỉ gộp Failed và Success, bỏ Sudo
+            df_interest = pd.concat([df_fail, df_success])
+            
             if not df_interest.empty:
                 df_interest["extracted_user"] = df_interest["message"].apply(extract_user)
                 
-                # Loại bỏ unknown và rỗng
+                # Lọc user hợp lệ
                 user_counts = df_interest[
                     (df_interest["extracted_user"] != "unknown") & 
                     (df_interest["extracted_user"] != "")
@@ -457,8 +451,19 @@ elif dashboard_type == T["dash_security"]:
                 user_counts.columns = ["User", "Count"]
                 
                 if not user_counts.empty:
-                    fig = px.bar(user_counts.head(10), x="Count", y="User", orientation='h')
-                    fig.update_layout(yaxis=dict(autorange="reversed"))
+                    # UPDATED CHART:
+                    # x="User", y="Count" -> Cột đứng
+                    # color="User" -> Mỗi user một màu khác nhau
+                    fig = px.bar(
+                        user_counts.head(10), 
+                        x="User", 
+                        y="Count", 
+                        color="User", 
+                        text_auto=True # Hiển thị số trên đầu cột
+                    )
+                    
+                    # Tắt legend nếu thấy rối (hoặc để mặc định)
+                    fig.update_layout(showlegend=False)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("No usernames extracted.")
