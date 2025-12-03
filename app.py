@@ -18,7 +18,7 @@ try:
     ES_PASS = st.secrets["ES_PASS"]
     ES_SCHEME = st.secrets.get("ES_SCHEME", "https")
 except Exception:
-    # Fallback cho local testing (nếu không có secrets.toml)
+    # Fallback cho local testing
     ES_HOST = "localhost"
     ES_PORT = 9200
     ES_USER = "elastic"
@@ -28,7 +28,6 @@ except Exception:
 SYSLOG_INDEX = "syslog-*"
 METRIC_INDEX = "metricbeat-*"
 
-# Khởi tạo kết nối Elasticsearch
 es = Elasticsearch(
     hosts=[{"host": ES_HOST, "port": ES_PORT, "scheme": ES_SCHEME}],
     basic_auth=(ES_USER, ES_PASS),
@@ -56,7 +55,7 @@ LANGS = {
         "time_range": "Time range",
         "ranges": ["Last 15 minutes", "Last 1 hour", "Last 6 hours", "Last 24 hours", "Last 7 days"],
         "refresh": "Refresh data",
-        "sev_filter": "Severity filter",
+        "sev_filter": "Severity filter (Query)",
         "sev_all": "All severities",
         "sev_crit": "Only critical (0–3)",
         "sev_warn": "Warning and above (0–4)",
@@ -82,9 +81,10 @@ LANGS = {
         "vyos_total": "Total VyOS events",
         "vyos_hosts": "Number of VyOS hosts",
         "vyos_over_time": "VyOS events over time",
-        "sev_chart_type": "Severity chart",
+        "sev_chart_type": "Severity Distribution",
         "pie": "Pie",
         "bar": "Bar",
+        "filter_by_sev": "Filter by Severity Name",
         
         # STATUS & TRENDS KEYS
         "status_board": "System Health Status",
@@ -95,7 +95,7 @@ LANGS = {
         # SECURITY KEYS
         "sec_failed": "Failed Login Attempts",
         "sec_accepted": "Accepted Logins",
-        "sec_users": "Top Hosts (Security Events)",
+        "sec_users": "Top Hosts (Failed Logins)",
     },
     "vi": {
         "page_title": "Bảng điều khiển Log Mạng",
@@ -113,7 +113,7 @@ LANGS = {
         "time_range": "Khoảng thời gian",
         "ranges": ["15 phút gần nhất", "1 giờ gần nhất", "6 giờ gần nhất", "24 giờ gần nhất"],
         "refresh": "Tải lại dữ liệu",
-        "sev_filter": "Lọc mức độ nghiêm trọng",
+        "sev_filter": "Lọc mức độ nghiêm trọng (Query)",
         "sev_all": "Tất cả mức độ",
         "sev_crit": "Chỉ nghiêm trọng (0–3)",
         "sev_warn": "Cảnh báo trở lên (0–4)",
@@ -139,9 +139,10 @@ LANGS = {
         "vyos_total": "Tổng sự kiện VyOS",
         "vyos_hosts": "Số lượng host VyOS",
         "vyos_over_time": "Sự kiện VyOS theo thời gian",
-        "sev_chart_type": "Kiểu biểu đồ Severity",
+        "sev_chart_type": "Phân phối mức độ (Severity)",
         "pie": "Tròn (Pie)",
         "bar": "Cột (Bar)",
+        "filter_by_sev": "Lọc theo tên mức độ (Severity)",
         
         # STATUS & TRENDS KEYS
         "status_board": "Bảng trạng thái sức khỏe hệ thống",
@@ -152,7 +153,7 @@ LANGS = {
         # SECURITY KEYS
         "sec_failed": "Đăng nhập thất bại (Failed)",
         "sec_accepted": "Đăng nhập thành công",
-        "sec_users": "Top Host có sự kiện bảo mật",
+        "sec_users": "Top Host bị lỗi đăng nhập",
     },
 }
 
@@ -265,7 +266,7 @@ T = LANGS[LANG]
 st.title(T["title"])
 st.caption(T["caption"])
 
-# Chọn Dashboard - Đã loại bỏ "Raw Metrics" và "Host Details"
+# Chọn Dashboard
 dashboard_type = st.sidebar.radio(
     T["select_dashboard"],
     [
@@ -400,10 +401,9 @@ elif dashboard_type == T["dash_security"]:
     if dfs.empty:
         st.warning(T["no_syslog_range"])
     else:
-        # Chỉ lọc log thất bại
+        # Lọc các log liên quan đến bảo mật (Chỉ lấy lỗi)
         df_fail = dfs[dfs["message"].str.contains("authentication failure", case=False, na=False)]
 
-        # Hiển thị Metric duy nhất
         st.metric(T["sec_failed"], len(df_fail), delta_color="inverse")
 
         col_main, col_chart = st.columns([2, 1])
@@ -418,11 +418,11 @@ elif dashboard_type == T["dash_security"]:
         with col_chart:
             st.markdown(f"#### {T['sec_users']}")
             
-            # Chỉ sử dụng dữ liệu Failed để vẽ biểu đồ Top Host
+            # Sử dụng dữ liệu Failed để vẽ biểu đồ Top Host
             df_interest = df_fail.copy()
             
             if not df_interest.empty:
-                # Đếm hostname bị lỗi nhiều nhất
+                # Đếm trực tiếp hostname
                 host_counts = df_interest["hostname"].value_counts().reset_index()
                 host_counts.columns = ["Hostname", "Count"]
                 
@@ -431,23 +431,22 @@ elif dashboard_type == T["dash_security"]:
                         host_counts.head(10), 
                         x="Hostname", 
                         y="Count", 
-                        color="Hostname",
-                        text_auto=True,
-                        title="Top Hosts with Failures"
+                        color="Hostname", # Mỗi host một màu
+                        text_auto=True
                     )
                     fig.update_layout(showlegend=False)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("No hosts found.")
             else:
-                st.info("No failed login data.")
+                st.info("No failed logins.")
 
 # ========================
 # 6) Syslog Dashboard
 # ========================
 elif dashboard_type == T["dash_syslog"]:
     st.subheader(T["dash_syslog"])
-
+    
     # Global Severity Filter (Filter at Query Level)
     sev_opts = {
         T["sev_all"]: None,
@@ -455,70 +454,58 @@ elif dashboard_type == T["dash_syslog"]:
         T["sev_warn"]: [0, 1, 2, 3, 4],
         T["sev_notice"]: [0, 1, 2, 3, 4, 5],
     }
-    sev_label = st.sidebar.selectbox(
-        T["sev_filter"], list(sev_opts.keys()), index=0)
+    sev_label = st.sidebar.selectbox(T["sev_filter"], list(sev_opts.keys()), index=0)
     sev_codes = sev_opts[sev_label]
     message_query = st.sidebar.text_input(T["search_msg"], value="")
 
     df = query_syslog(time_range, sev_codes)
-
+    
     if not df.empty and message_query:
-        df = df[df["message"].str.contains(
-            message_query, case=False, na=False)]
+        df = df[df["message"].str.contains(message_query, case=False, na=False)]
 
     if df.empty:
-        st.warning(T["no_syslog_range"]
-                   if not message_query else T["no_syslog_filter"])
+        st.warning(T["no_syslog_range"] if not message_query else T["no_syslog_filter"])
     else:
         # Bỏ Host with events, chỉ giữ 2 metric
         c1, c2 = st.columns(2)
         c1.metric(T["total_events"], len(df))
         c2.metric(T["error_events"], int((df["severity_code"] <= 3).sum()))
-
+        
         # Local Severity Name Filter (Multiselect)
         all_sevs = sorted(df["severity_name"].dropna().unique())
-        selected_sevs = st.multiselect(
-            T["filter_by_sev"], options=all_sevs, default=all_sevs)
-
+        selected_sevs = st.multiselect(T["filter_by_sev"], options=all_sevs, default=all_sevs)
+        
         # Apply local filter
-        df_filtered = df[df["severity_name"].isin(
-            selected_sevs)] if selected_sevs else df
-
+        df_filtered = df[df["severity_name"].isin(selected_sevs)] if selected_sevs else df
+        
         # 1. Line Chart (Top)
         st.markdown(f"### {T['events_over_time']}")
         if not df_filtered.empty:
             df_chart = df_filtered.copy()
             df_chart["time_bucket"] = df_chart["timestamp"].dt.floor("1min")
-            chart_data = df_chart.groupby(
-                ["time_bucket", "severity_name"]).size().reset_index(name="count")
-            st.line_chart(chart_data.pivot(index="time_bucket",
-                          columns="severity_name", values="count").fillna(0))
-
+            chart_data = df_chart.groupby(["time_bucket", "severity_name"]).size().reset_index(name="count")
+            st.line_chart(chart_data.pivot(index="time_bucket", columns="severity_name", values="count").fillna(0))
+        
         # 2. Pie Chart (Bottom)
         st.markdown(f"### {T['sev_chart_type']}")
         if not df_filtered.empty:
-            sev_counts = df_filtered["severity_name"].value_counts(
-            ).reset_index()
+            sev_counts = df_filtered["severity_name"].value_counts().reset_index()
             sev_counts.columns = ["Severity", "Count"]
-            fig = px.pie(sev_counts, values="Count",
-                         names="Severity", hole=0.4)
+            fig = px.pie(sev_counts, values="Count", names="Severity", hole=0.4)
             st.plotly_chart(fig, use_container_width=True)
 
         st.markdown(f"### {T['detailed_syslog']}")
-        host_filter = st.multiselect(
-            T["filter_by_host"], options=sorted(df["hostname"].dropna().unique()))
-
+        host_filter = st.multiselect(T["filter_by_host"], options=sorted(df["hostname"].dropna().unique()))
+        
         # Filter Host based on current filtered data
         df_final = df_filtered
         if host_filter:
             df_final = df_final[df_final["hostname"].isin(host_filter)]
-
+        
         st.dataframe(
-            df_final[["timestamp", "hostname", "severity_name", "message"]].sort_values(
-                "timestamp", ascending=False),
+            df_final[["timestamp", "hostname", "severity_name", "message"]].sort_values("timestamp", ascending=False),
             use_container_width=True, height=400
         )
-
 
 # ========================
 # 7) VyOS Dashboard
@@ -527,9 +514,8 @@ elif dashboard_type == T["dash_vyos"]:
     st.subheader(T["vyos_header"])
     
     keyword = st.sidebar.text_input(T["vyos_host_contains"], value="vyos")
-    # Thêm ô tìm kiếm nội dung message
     message_query = st.sidebar.text_input(T["search_msg"], value="")
-    
+
     sev_mode = st.sidebar.selectbox(T["vyos_sev_filter"], [T["vyos_sev_all"], T["vyos_sev_err"], T["vyos_sev_warn"]])
     
     sev_codes = None
@@ -538,30 +524,27 @@ elif dashboard_type == T["dash_vyos"]:
 
     dfv = query_syslog(time_range, sev_codes)
     if not dfv.empty:
-        # Lọc theo Hostname
         dfv = dfv[dfv["hostname"].str.contains(keyword, case=False, na=False)]
-        # Lọc theo Message (nếu có nhập)
         if message_query:
             dfv = dfv[dfv["message"].str.contains(message_query, case=False, na=False)]
 
     if dfv.empty:
-        st.info(f"{T['no_vyos_host_msg']} '{keyword}'" + (f" & message '{message_query}'" if message_query else ""))
+        st.info(f"{T['no_vyos_host_msg']} '{keyword}'")
     else:
         c1, c2 = st.columns(2)
         c1.metric(T["vyos_total"], len(dfv))
         c2.metric(T["vyos_hosts"], dfv["hostname"].nunique())
 
-        # Line Chart (Biểu đồ đường) nằm trên
+        # Line Chart (Top)
         st.markdown(f"### {T['vyos_over_time']}")
         dfv["time_bucket"] = dfv["timestamp"].dt.floor("1min")
         chart = dfv.groupby(["time_bucket", "severity_name"]).size().reset_index(name="count")
         st.line_chart(chart.pivot(index="time_bucket", columns="severity_name", values="count").fillna(0))
-        
-        # Pie Chart (Biểu đồ tròn) nằm dưới
+
+        # Pie Chart (Bottom)
         st.markdown(f"### {T['sev_chart_type']}")
         sev_counts = dfv["severity_name"].value_counts().reset_index()
         sev_counts.columns = ["Severity", "Count"]
-        # Vẽ biểu đồ tròn
         fig = px.pie(sev_counts, values="Count", names="Severity", hole=0.4)
         st.plotly_chart(fig, use_container_width=True)
 
