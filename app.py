@@ -79,6 +79,7 @@ LANGS = {
         "sev_chart_type": "Severity chart",
         "pie": "Pie",
         "bar": "Bar",
+        "cpu_usage":"CPU Usage (%)",
 
         # STATUS & TRENDS KEYS
         "status_board": "System Health Status",
@@ -135,6 +136,7 @@ LANGS = {
         "sev_chart_type": "Sự kiện theo mức Severity",
         "pie": "Tròn (Pie)",
         "bar": "Cột (Bar)",
+        "cpu_usage":"Mức sử dụng CPU (%)",
 
         # STATUS & TRENDS KEYS
         "status_board": "Bảng trạng thái sức khỏe hệ thống",
@@ -142,7 +144,7 @@ LANGS = {
         "select_host_viz": "Chọn host để xem biểu đồ",
 
         # SECURITY KEYS
-        "sec_failed": "Đăng nhập thất bại (Failed)",
+        "sec_failed": "Đăng nhập thất bại",
         "sec_users": "Các Host đăng nhập thất bại",
     },
 }
@@ -381,7 +383,7 @@ if dashboard_type == T["dash_status"]:
                     "1min")
 
                 # Biểu đồ CPU
-                st.markdown("**CPU Usage (%)**")
+                st.markdown(f"### cpu_usage']}")
                 cpu_data = dfm_chart.pivot_table(
                     index="time_bucket",
                     columns="hostname",
