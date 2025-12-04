@@ -45,7 +45,7 @@ LANGS = {
         "dash_vyos": "Network Devices (VyOS)",
 
         "time_range": "Time range",
-        "ranges": ["Last 15 minutes", "Last 1 hour", "Last 6 hours", "Last 24 hours", "Last 7 days"],
+        "ranges": ["Last 15 minutes", "Last 1 hour", "Last 6 hours", "Last 24 hours"],
         "refresh": "Refresh data",
         "sev_filter": "Severity filter",
         "sev_all": "All severities",
