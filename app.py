@@ -6,10 +6,7 @@ import time
 import numpy as np
 import plotly.express as px
 
-# ========================
 # 0) Elasticsearch config
-# ========================
-
 ES_HOST = st.secrets["ES_HOST"]
 ES_PORT = int(st.secrets.get("ES_PORT", 9243))
 ES_USER = st.secrets["ES_USER"]
@@ -27,9 +24,7 @@ es = Elasticsearch(
     ssl_show_warn=False
 )
 
-# ========================
-# 1) I18N (EN/VI)
-# ========================
+# 1) Language (EN/VI)
 LANGS = {
     "en": {
         "page_title": "Network Log Dashboard",
@@ -169,9 +164,7 @@ def get_time_range_gte(label: str) -> str:
     if label in ("Last 24 hours", "24 giờ gần nhất"): return "now-24h"
     return "now-15m"
 
-# ========================
 # 2) Queries
-# ========================
 
 def query_syslog(time_range_label: str, severity_codes=None, size: int = 2000) -> pd.DataFrame:
     gte = get_time_range_gte(time_range_label)
@@ -216,7 +209,7 @@ def query_syslog(time_range_label: str, severity_codes=None, size: int = 2000) -
     return df
 
 def query_metrics(time_range_label: str, size: int = 2000) -> pd.DataFrame:
-    # Hàm này vẫn cần thiết để lấy dữ liệu cho Dashboard Status
+    # Dashboard Status
     gte = get_time_range_gte(time_range_label)
     body = {
         "size": size,
@@ -257,9 +250,7 @@ def query_metrics(time_range_label: str, size: int = 2000) -> pd.DataFrame:
         df["timestamp"] = pd.to_datetime(df["timestamp"])
     return df
 
-# ========================
 # 3) UI Setup
-# ========================
 st.set_page_config(page_title="Monitor Dashboard", layout="wide")
 
 st.sidebar.header("Controls / Điều khiển")
@@ -274,7 +265,7 @@ st.caption(T["caption"])
 dashboard_type = st.sidebar.radio(
     T["select_dashboard"],
     [
-        T["dash_status"],       # Enhanced: Table + Charts
+        T["dash_status"],       
         T["dash_security"],
         T["dash_syslog"], 
         T["dash_vyos"]
@@ -287,19 +278,16 @@ st.sidebar.markdown("---")
 if st.sidebar.button(T["refresh"]):
     st.cache_data.clear()
 
-# ========================
 # 4) Status Board (Table + Charts)
-# ========================
 if dashboard_type == T["dash_status"]:
     st.subheader(T["status_board"])
 
-    # Lấy dữ liệu metric (tăng size để vẽ biểu đồ cho đẹp)
+    # Lấy dữ liệu metric 
     dfm = query_metrics(time_range, size=3000)
     
     if dfm.empty:
         st.warning(T["no_metric_range"])
     else:
-        # --- PHẦN 1: BẢNG TRẠNG THÁI (TABLE) ---
         # Tính toán thống kê cho từng Host
         host_stats = dfm.groupby("hostname").agg({
             "timestamp": "max",             # Lấy thời gian cập nhật cuối cùng
@@ -356,7 +344,7 @@ if dashboard_type == T["dash_status"]:
             height=400
         )
 
-        # --- PHẦN 2: BIỂU ĐỒ XU HƯỚNG (CHARTS) ---
+        # --- PHẦN 2: CHARTS
         st.divider()
         st.subheader(T["trends_header"])
         
@@ -369,7 +357,7 @@ if dashboard_type == T["dash_status"]:
             dfm_chart = dfm[dfm["hostname"].isin(selected_hosts)].copy()
             
             if not dfm_chart.empty:
-                # Làm tròn thời gian về phút để biểu đồ mượt hơn
+                # Làm tròn thời gian về phút 
                 dfm_chart["time_bucket"] = dfm_chart["timestamp"].dt.floor("1min")
                 
                 # Biểu đồ CPU
@@ -394,9 +382,9 @@ if dashboard_type == T["dash_status"]:
         else:
             st.info("Select at least one host to view trends.")
 
-# ========================
+
 # 5) Security Dashboard
-# ========================
+
 elif dashboard_type == T["dash_security"]:
     st.subheader(T["dash_security"])
     dfs = query_syslog(time_range, size=2000)
@@ -436,7 +424,6 @@ elif dashboard_type == T["dash_security"]:
                         x="Hostname", 
                         y="Count", 
                         color="Hostname",
-                        title="Top Hosts with Failures"
                     )
                     fig.update_layout(showlegend=True)
                     st.plotly_chart(fig, use_container_width=True)
@@ -445,16 +432,13 @@ elif dashboard_type == T["dash_security"]:
             else:
                 st.info("No failed login data.")
 
-# ========================
+
 # 6) Syslog Dashboard
-# ========================
-# ========================
-# 6) Syslog Dashboard
-# ========================
+
 elif dashboard_type == T["dash_syslog"]:
     st.subheader(T["dash_syslog"])
 
-    # --- 1. SETUP LAYOUT (Tạo khung giao diện 3 cột) ---
+    # --- 1. SETUP LAYOUT 
     with st.container():
         # Chia tỷ lệ cột: Host (2) - Severity (1) - Message (1)
         col_host, col_sev, col_msg = st.columns([2, 1, 1])
@@ -510,11 +494,9 @@ elif dashboard_type == T["dash_syslog"]:
         c1.metric(T["total_events"], len(df))
         c2.metric(T["error_events"], int((df["severity_code"] <= 3).sum()))
 
-        # [ĐÃ BỎ]: Đoạn code st.multiselect "Lọc theo tên mức độ (Severity)" cũ tại đây
 
         # 1. Line Chart
         st.markdown(f"### {T['events_over_time']}")
-        # Sử dụng trực tiếp df (thay vì df_filtered)
         df_chart = df.copy()
         df_chart["time_bucket"] = df_chart["timestamp"].dt.floor("1min")
         chart_data = df_chart.groupby(
@@ -536,21 +518,16 @@ elif dashboard_type == T["dash_syslog"]:
                 "timestamp", ascending=False),
             use_container_width=True, height=400
         )
-# ========================
+
 # 7) VyOS Dashboard
-# ========================
-# ========================
-# 7) VyOS Dashboard
-# ========================
 elif dashboard_type == T["dash_vyos"]:
     st.subheader(T["vyos_header"])
 
     # --- 1. FILTERS (Layout 3 cột) ---
-    # Đặt tất cả bộ lọc lên đầu trang
     c_host, c_sev, c_msg = st.columns(3)
 
     with c_host:
-        # Hostname Filter (giữ nguyên logic nhập từ khóa như cũ)
+        # Hostname Filter 
         keyword = st.text_input(T["vyos_host_contains"], value="vyos")
 
     with c_sev:
