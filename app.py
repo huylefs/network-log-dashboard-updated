@@ -550,48 +550,85 @@ elif dashboard_type == T["dash_syslog"]:
 # ========================
 # 7) VyOS Dashboard
 # ========================
+# ========================
+# 7) VyOS Dashboard
+# ========================
 elif dashboard_type == T["dash_vyos"]:
     st.subheader(T["vyos_header"])
-    
-    keyword = st.sidebar.text_input(T["vyos_host_contains"], value="vyos")
-    message_query = st.sidebar.text_input(T["search_msg"], value="")
-    
-    sev_mode = st.sidebar.selectbox(T["vyos_sev_filter"], [T["vyos_sev_all"], T["vyos_sev_err"], T["vyos_sev_warn"]])
-    
-    sev_codes = None
-    if sev_mode == T["vyos_sev_err"]: sev_codes = [0, 1, 2, 3]
-    if sev_mode == T["vyos_sev_warn"]: sev_codes = [0, 1, 2, 3, 4]
 
+    # --- 1. FILTERS (Layout 3 cột) ---
+    # Đặt tất cả bộ lọc lên đầu trang
+    c_host, c_sev, c_msg = st.columns(3)
+
+    with c_host:
+        # Hostname Filter (giữ nguyên logic nhập từ khóa như cũ)
+        keyword = st.text_input(T["vyos_host_contains"], value="vyos")
+
+    with c_sev:
+        # Severity Filter
+        sev_mode = st.selectbox(T["vyos_sev_filter"], [
+                                T["vyos_sev_all"], T["vyos_sev_err"], T["vyos_sev_warn"]])
+
+    with c_msg:
+        # Message Filter
+        message_query = st.text_input(T["search_msg"], value="")
+
+    # --- 2. LOGIC & QUERY ---
+    # Xác định mã severity dựa trên lựa chọn
+    sev_codes = None
+    if sev_mode == T["vyos_sev_err"]:
+        sev_codes = [0, 1, 2, 3]
+    if sev_mode == T["vyos_sev_warn"]:
+        sev_codes = [0, 1, 2, 3, 4]
+
+    # Query dữ liệu từ Elasticsearch
     dfv = query_syslog(time_range, sev_codes)
+
+    # --- 3. FILTERING DATAFRAME ---
     if not dfv.empty:
-        # Lọc theo Hostname
-        dfv = dfv[dfv["hostname"].str.contains(keyword, case=False, na=False)]
+        # Lọc theo Hostname (chứa từ khóa)
+        if keyword:
+            dfv = dfv[dfv["hostname"].str.contains(keyword, case=False, na=False)]
+        
         # Lọc theo Message (nếu có nhập)
         if message_query:
-            dfv = dfv[dfv["message"].str.contains(message_query, case=False, na=False)]
+            dfv = dfv[dfv["message"].str.contains(
+                message_query, case=False, na=False)]
+
+    # --- 4. DISPLAY ---
+    st.divider()
 
     if dfv.empty:
-        st.info(f"{T['no_vyos_host_msg']} '{keyword}'" + (f" & message '{message_query}'" if message_query else ""))
+        st.info(f"{T['no_vyos_host_msg']} '{keyword}'" +
+                (f" & message '{message_query}'" if message_query else ""))
     else:
+        # Metrics
         c1, c2 = st.columns(2)
         c1.metric(T["vyos_total"], len(dfv))
         c2.metric(T["vyos_hosts"], dfv["hostname"].nunique())
 
-        # Line Chart (Biểu đồ đường) nằm trên
+        # Line Chart (Biểu đồ đường)
         st.markdown(f"### {T['vyos_over_time']}")
-        dfv["time_bucket"] = dfv["timestamp"].dt.floor("1min")
-        chart = dfv.groupby(["time_bucket", "severity_name"]).size().reset_index(name="count")
-        st.line_chart(chart.pivot(index="time_bucket", columns="severity_name", values="count").fillna(0))
-        
-        # Pie Chart (Biểu đồ tròn) nằm dưới
+        # Copy data để xử lý vẽ biểu đồ
+        df_chart = dfv.copy()
+        df_chart["time_bucket"] = df_chart["timestamp"].dt.floor("1min")
+        chart = df_chart.groupby(["time_bucket", "severity_name"]
+                            ).size().reset_index(name="count")
+        st.line_chart(chart.pivot(index="time_bucket",
+                      columns="severity_name", values="count").fillna(0))
+
+        # Pie Chart (Biểu đồ tròn)
         st.markdown(f"### {T['sev_chart_type']}")
         sev_counts = dfv["severity_name"].value_counts().reset_index()
         sev_counts.columns = ["Severity", "Count"]
-        # Vẽ biểu đồ tròn
+        
         fig = px.pie(sev_counts, values="Count", names="Severity", hole=0.4)
         st.plotly_chart(fig, use_container_width=True)
 
+        # Detail Table
+        st.markdown(f"### {T['detailed_syslog']}")
         st.dataframe(
-            dfv[["timestamp", "hostname", "severity_name", "message"]].sort_values("timestamp", ascending=False),
+            dfv[["timestamp", "hostname", "severity_name", "message"]
+                ].sort_values("timestamp", ascending=False),
             use_container_width=True
         )
