@@ -437,7 +437,6 @@ elif dashboard_type == T["dash_security"]:
                         x="Hostname", 
                         y="Count", 
                         color="Hostname",
-                        text_auto=True,
                         title="Top Hosts with Failures"
                     )
                     fig.update_layout(showlegend=True)
