@@ -174,7 +174,7 @@ def get_time_range_gte(label: str) -> str:
 # 2) Queries
 # ========================
 
-def query_syslog(time_range_label: str, severity_codes=None, size: int = 1000) -> pd.DataFrame:
+def query_syslog(time_range_label: str, severity_codes=None, size: int = 2000) -> pd.DataFrame:
     gte = get_time_range_gte(time_range_label)
     must_filters = [{"range": {"@timestamp": {"gte": gte, "lte": "now"}}}]
     if severity_codes:
@@ -400,7 +400,7 @@ if dashboard_type == T["dash_status"]:
 # ========================
 elif dashboard_type == T["dash_security"]:
     st.subheader(T["dash_security"])
-    dfs = query_syslog(time_range, size=1000)
+    dfs = query_syslog(time_range, size=2000)
     
     if dfs.empty:
         st.warning(T["no_syslog_range"])
