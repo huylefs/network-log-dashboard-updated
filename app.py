@@ -11,19 +11,13 @@ import re
 # ========================
 # 0) Elasticsearch config
 # ========================
-try:
-    ES_HOST = st.secrets["ES_HOST"]
-    ES_PORT = int(st.secrets.get("ES_PORT", 9243))
-    ES_USER = st.secrets["ES_USER"]
-    ES_PASS = st.secrets["ES_PASS"]
-    ES_SCHEME = st.secrets.get("ES_SCHEME", "https")
-except Exception:
-    # Fallback cho local testing
-    ES_HOST = "localhost"
-    ES_PORT = 9200
-    ES_USER = "elastic"
-    ES_PASS = "changeme"
-    ES_SCHEME = "http"
+
+ES_HOST = st.secrets["ES_HOST"]
+ES_PORT = int(st.secrets.get("ES_PORT", 9243))
+ES_USER = st.secrets["ES_USER"]
+ES_PASS = st.secrets["ES_PASS"]
+ES_SCHEME = st.secrets.get("ES_SCHEME", "https")
+
 
 SYSLOG_INDEX = "syslog-*"
 METRIC_INDEX = "metricbeat-*"
@@ -45,17 +39,17 @@ LANGS = {
         "caption": "Built with Streamlit + Elasticsearch",
         "controls": "Controls",
         "select_dashboard": "Select dashboard",
-        
+
         # MENU ITEMS
-        "dash_status": "Inventory Status & Trends",
-        "dash_security": "Security Audit (SSH)",
-        "dash_syslog": "Syslog Explorer",
+        "dash_status": "System metrics",
+        "dash_security": "Security (SSH)",
+        "dash_syslog": "Syslog",
         "dash_vyos": "Network Devices (VyOS)",
-        
+
         "time_range": "Time range",
         "ranges": ["Last 15 minutes", "Last 1 hour", "Last 6 hours", "Last 24 hours", "Last 7 days"],
         "refresh": "Refresh data",
-        "sev_filter": "Severity filter (Query)",
+        "sev_filter": "Severity filter",
         "sev_all": "All severities",
         "sev_crit": "Only critical (0–3)",
         "sev_warn": "Warning and above (0–4)",
@@ -66,7 +60,7 @@ LANGS = {
         "total_events": "Total events",
         "error_events": "Error events (severity ≤ 3)",
         "hosts_with_events": "Hosts with events",
-        "events_over_time": "Event over time",
+        "events_over_time": "Events over time",
         "detailed_syslog": "Detailed syslog events",
         "filter_by_host": "Filter by hostname",
         "no_metric_range": "No metricbeat data found for the selected range.",
@@ -75,27 +69,33 @@ LANGS = {
         "vyos_sev_filter": "Severity filter",
         "vyos_sev_all": "All severities",
         "vyos_sev_err": "Only errors (≤ 3)",
-        "vyos_sev_warn": "Only warnings and above (≤ 4)",
+        "vyos_sev_warn": "Warning and above (≤ 4)",
         "no_syslog_vyos_range": "No syslog events found for the selected range.",
         "no_vyos_host_msg": "No events found for hostnames containing",
         "vyos_total": "Total VyOS events",
         "vyos_hosts": "Number of VyOS hosts",
         "vyos_over_time": "VyOS events over time",
-        "sev_chart_type": "Severity Distribution",
+        "sev_chart_type": "Severity chart",
         "pie": "Pie",
         "bar": "Bar",
-        "filter_by_sev": "Filter by Severity Name",
-        
+
         # STATUS & TRENDS KEYS
         "status_board": "System Health Status",
-        "status_legend": "Legend: CPU > 75%, Mem > 75%, Disk > 75% -> RED",
-        "trends_header": "Performance Trends (CPU & Memory)",
+        "trends_header": "CPU & Memory",
         "select_host_viz": "Select hosts to visualize",
-        
+        "cpu_usage": "CPU Usage (%)",
+        "mem_usage": "Memory Usage (%)",
+        "select_host_trend_info": "Select at least one host to view trends.",
+
         # SECURITY KEYS
         "sec_failed": "Failed Login Attempts",
         "sec_accepted": "Accepted Logins",
-        "sec_users": "Top Hosts (Failed Logins)",
+        "sec_users": "Top Hosts (Security Events)",
+        "sec_recent_failed": "Recent Failed Logins",
+        "sec_no_failed_detected": "No failed login attempts detected.",
+        "sec_top_hosts_failures": "Top Hosts with Failures",
+        "sec_no_hosts": "No hosts found.",
+        "sec_no_failed_data": "No failed login data.",
     },
     "vi": {
         "page_title": "Bảng điều khiển Log Mạng",
@@ -103,17 +103,17 @@ LANGS = {
         "caption": "Xây dựng bằng Streamlit + Elasticsearch",
         "controls": "Điều khiển",
         "select_dashboard": "Chọn bảng điều khiển",
-        
+
         # MENU ITEMS
-        "dash_status": "Trạng thái & Biểu đồ (Status)",
-        "dash_security": "Bảo mật (SSH/Auth)",
+        "dash_status": "Thông số hệ thống",
+        "dash_security": "Bảo mật (SSH)",
         "dash_syslog": "Nhật ký Syslog",
         "dash_vyos": "Thiết bị mạng (VyOS)",
-        
+
         "time_range": "Khoảng thời gian",
         "ranges": ["15 phút gần nhất", "1 giờ gần nhất", "6 giờ gần nhất", "24 giờ gần nhất"],
         "refresh": "Tải lại dữ liệu",
-        "sev_filter": "Lọc mức độ nghiêm trọng (Query)",
+        "sev_filter": "Lọc mức độ nghiêm trọng",
         "sev_all": "Tất cả mức độ",
         "sev_crit": "Chỉ nghiêm trọng (0–3)",
         "sev_warn": "Cảnh báo trở lên (0–4)",
@@ -139,21 +139,26 @@ LANGS = {
         "vyos_total": "Tổng sự kiện VyOS",
         "vyos_hosts": "Số lượng host VyOS",
         "vyos_over_time": "Sự kiện VyOS theo thời gian",
-        "sev_chart_type": "Phân phối mức độ (Severity)",
+        "sev_chart_type": "Sự kiện theo mức Severity",
         "pie": "Tròn (Pie)",
         "bar": "Cột (Bar)",
-        "filter_by_sev": "Lọc theo tên mức độ (Severity)",
-        
+
         # STATUS & TRENDS KEYS
         "status_board": "Bảng trạng thái sức khỏe hệ thống",
-        "status_legend": "Chú thích: CPU > 75%, RAM > 75%, Disk > 75% -> ĐỎ",
-        "trends_header": "Biểu đồ xu hướng (CPU & Bộ nhớ)",
+        "trends_header": "CPU & Bộ nhớ",
         "select_host_viz": "Chọn host để xem biểu đồ",
+        "cpu_usage": "Mức sử dụng CPU (%)",
+        "mem_usage": "Mức sử dụng bộ nhớ (%)",
+        "select_host_trend_info": "Chọn ít nhất một host để xem biểu đồ.",
 
         # SECURITY KEYS
-        "sec_failed": "Đăng nhập thất bại (Failed)",
-        "sec_accepted": "Đăng nhập thành công",
-        "sec_users": "Top Host bị lỗi đăng nhập",
+        "sec_failed": "Đăng nhập thất bại",
+        "sec_users": "Các Host đăng nhập thất bại",
+        "sec_recent_failed": "Các lần đăng nhập thất bại gần đây",
+        "sec_no_failed_detected": "Không phát hiện lần đăng nhập thất bại nào.",
+        "sec_top_hosts_failures": "Các host có số lần đăng nhập thất bại nhiều nhất",
+        "sec_no_hosts": "Không tìm thấy host nào.",
+        "sec_no_failed_data": "Không có dữ liệu đăng nhập thất bại.",
     },
 }
 
