@@ -456,19 +456,11 @@ elif dashboard_type == T["dash_syslog"]:
     # Tạo container và chia 3 cột ngay đầu trang
     with st.container():
         # Chia tỷ lệ cột: Host (2) - Severity (1) - Message (1)
-        col_host, col_sev, col_msg = st.columns([2, 1, 1])
+        col_host, col_msg = st.columns([2, 2])
 
         # --- Cột 2: Severity (Mức độ) ---
         # (Hiển thị ngay vì danh sách option là cố định)
-        with col_sev:
-            sev_opts = {
-                T["sev_all"]: None,
-                T["sev_crit"]: [0, 1, 2, 3],
-                T["sev_warn"]: [0, 1, 2, 3, 4],
-                T["sev_notice"]: [0, 1, 2, 3, 4, 5],
-            }
-            sev_label = st.selectbox(T["sev_filter"], list(sev_opts.keys()), index=0)
-            sev_codes = sev_opts[sev_label]
+
 
         # --- Cột 3: Message (Tìm kiếm) ---
         with col_msg:
