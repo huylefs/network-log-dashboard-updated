@@ -282,7 +282,7 @@ dashboard_type = st.sidebar.radio(
     index=0,
 )
 
-time_range = st.sidebar.selectbox(T["time_range"], T["ranges"], index=1)
+time_range = st.sidebar.selectbox(T["time_range"], T["ranges"], index=0)
 st.sidebar.markdown("---")
 if st.sidebar.button(T["refresh"]):
     st.cache_data.clear()
