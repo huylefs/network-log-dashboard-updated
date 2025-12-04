@@ -504,14 +504,62 @@ elif dashboard_type == T["dash_syslog"]:
 
         col_trend, col_dist = st.columns([2, 1])
 
-        with col_trend:
-            st.markdown(f"### {T['events_over_time']}")
-            df_chart = df.copy()
-            df_chart["time_bucket"] = df_chart["timestamp"].dt.floor("1min")
-            chart_data = df_chart.groupby(
-                ["time_bucket", "severity_name"]).size().reset_index(name="count")
-            st.line_chart(chart_data.pivot(index="time_bucket",
-                          columns="severity_name", values="count").fillna(0))
+def get_syslog_chart_data_agg(time_range_label: str):
+    """
+    Sử dụng Date Histogram Aggregation để đếm số lượng log theo từng phút.
+    Thay thế cho việc tải raw log về rồi dùng pandas groupby.
+    """
+    gte = get_time_range_gte(time_range_label)
+    
+    # Cấu trúc Aggregation
+    body = {
+        "size": 0,  # Quan trọng: Không lấy dữ liệu thô, chỉ lấy kết quả tính toán
+        "query": {
+            "range": {"@timestamp": {"gte": gte, "lte": "now"}}
+        },
+        "aggs": {
+            # 1. Chia nhỏ thời gian (Bucketing)
+            "logs_over_time": {
+                "date_histogram": {
+                    "field": "@timestamp",
+                    "fixed_interval": "1m",  # Gom nhóm mỗi 1 phút
+                    "min_doc_count": 0,      # Vẫn hiện các phút không có log (giá trị 0)
+                    "extended_bounds": {     # Đảm bảo biểu đồ phủ kín thời gian chọn
+                        "min": gte,
+                        "max": "now"
+                    }
+                },
+                "aggs": {
+                    # 2. Trong mỗi phút, chia theo Severity (Terms Aggregation)
+                    "by_severity": {
+                        "terms": {"field": "log.syslog.severity.name", "size": 10}
+                    }
+                }
+            }
+        }
+    }
+
+    res = es.search(index=SYSLOG_INDEX, body=body)
+    
+    # Phân tích kết quả trả về (Parsing Buckets)
+    buckets = res["aggregations"]["logs_over_time"]["buckets"]
+    
+    data = []
+    for bucket in buckets:
+        timestamp = bucket["key_as_string"]
+        # bucket["by_severity"]["buckets"] chứa danh sách severity trong phút đó
+        for sev_bucket in bucket["by_severity"]["buckets"]:
+            data.append({
+                "time_bucket": timestamp,
+                "severity_name": sev_bucket["key"],
+                "count": sev_bucket["doc_count"]
+            })
+            
+    # Chuyển thành DataFrame để vẽ biểu đồ
+    df = pd.DataFrame(data)
+    if not df.empty:
+        df["time_bucket"] = pd.to_datetime(df["time_bucket"])
+    return df
 
         with col_dist:
             st.markdown(f"### {T['sev_chart_type']}")
