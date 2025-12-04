@@ -167,8 +167,7 @@ def get_time_range_gte(label: str) -> str:
     if label in ("Last 1 hour", "1 giờ gần nhất"): return "now-1h"
     if label in ("Last 6 hours", "6 giờ gần nhất"): return "now-6h"
     if label in ("Last 24 hours", "24 giờ gần nhất"): return "now-24h"
-    if label in ("Last 7 days", "7 ngày gần nhất"): return "now-7d"
-    return "now-1h"
+    return "now-15m"
 
 # ========================
 # 2) Queries
@@ -487,7 +486,7 @@ elif dashboard_type == T["dash_syslog"]:
                 T["filter_by_host"],
                 options=available_hosts,
                 default=[],
-                placeholder="Chọn host (bỏ trống để xem tất cả)..."
+                placeholder="Choose Host"
             )
         else:
             st.info("Không có dữ liệu.")
