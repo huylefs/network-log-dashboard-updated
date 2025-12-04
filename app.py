@@ -513,9 +513,7 @@ elif dashboard_type == T["dash_syslog"]:
 
         # Chart Filters (Bộ lọc hiển thị riêng cho biểu đồ - nếu muốn giữ lại để lọc chi tiết hơn)
         # Nếu cảm thấy thừa vì đã có lọc Severity ở trên, bạn có thể bỏ đoạn này và dùng luôn df
-        all_sevs = sorted(df["severity_name"].dropna().unique())
-        selected_sevs = st.multiselect(
-            T["filter_by_sev"], options=all_sevs, default=all_sevs)
+ 
 
         # Apply local filter for charts
         df_filtered = df[df["severity_name"].isin(selected_sevs)] if selected_sevs else df
