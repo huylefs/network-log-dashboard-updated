@@ -449,14 +449,18 @@ elif dashboard_type == T["dash_security"]:
 # ========================
 # 6) Syslog Dashboard
 # ========================
+# ========================
+# 6) Syslog Dashboard
+# ========================
 elif dashboard_type == T["dash_syslog"]:
     st.subheader(T["dash_syslog"])
 
-    # --- 1. SETUP LAYOUT (Tạo khung giao diện trước) ---
-    # Tạo container và chia 3 cột ngay đầu trang
+    # --- 1. SETUP LAYOUT (Tạo khung giao diện 3 cột) ---
     with st.container():
         # Chia tỷ lệ cột: Host (2) - Severity (1) - Message (1)
         col_host, col_sev, col_msg = st.columns([2, 1, 1])
+
+        # --- Cột 2: Severity (Mức độ) ---
         with col_sev:
             sev_opts = {
                 T["sev_all"]: None,
@@ -467,17 +471,14 @@ elif dashboard_type == T["dash_syslog"]:
             sev_label = st.selectbox(T["sev_filter"], list(sev_opts.keys()), index=0)
             sev_codes = sev_opts[sev_label]
 
-
         # --- Cột 3: Message (Tìm kiếm) ---
         with col_msg:
             message_query = st.text_input(T["search_msg"], value="")
 
     # --- 2. QUERY DATA ---
-    # Truy vấn dữ liệu dựa trên Time Range và Severity đã chọn ở trên
     df = query_syslog(time_range, sev_codes)
 
     # --- 3. FILL HOST FILTER (Điền dữ liệu vào Cột 1) ---
-    # Bây giờ đã có dữ liệu (df), ta mới trích xuất danh sách Host để điền vào col_host đã tạo ở bước 1
     selected_hosts = []
     with col_host:
         if not df.empty:
@@ -486,13 +487,12 @@ elif dashboard_type == T["dash_syslog"]:
                 T["filter_by_host"],
                 options=available_hosts,
                 default=[],
-                placeholder="Choose host"
+                placeholder="Chọn host (bỏ trống để xem tất cả)..."
             )
         else:
             st.info("Không có dữ liệu.")
 
     # --- 4. APPLY LOCAL FILTERS ---
-    # Lọc lại dataframe dựa trên Host và Message người dùng nhập
     if not df.empty:
         if selected_hosts:
             df = df[df["hostname"].isin(selected_hosts)]
@@ -511,37 +511,29 @@ elif dashboard_type == T["dash_syslog"]:
         c1.metric(T["total_events"], len(df))
         c2.metric(T["error_events"], int((df["severity_code"] <= 3).sum()))
 
-        # Chart Filters (Bộ lọc hiển thị riêng cho biểu đồ - nếu muốn giữ lại để lọc chi tiết hơn)
-        # Nếu cảm thấy thừa vì đã có lọc Severity ở trên, bạn có thể bỏ đoạn này và dùng luôn df
-        all_sevs = sorted(df["severity_name"].dropna().unique())
-        selected_sevs = st.multiselect(
-            T["filter_by_sev"], options=all_sevs, default=all_sevs)
-
-        # Apply local filter for charts
-        df_filtered = df[df["severity_name"].isin(selected_sevs)] if selected_sevs else df
+        # [ĐÃ BỎ]: Đoạn code st.multiselect "Lọc theo tên mức độ (Severity)" cũ tại đây
 
         # 1. Line Chart
         st.markdown(f"### {T['events_over_time']}")
-        if not df_filtered.empty:
-            df_chart = df_filtered.copy()
-            df_chart["time_bucket"] = df_chart["timestamp"].dt.floor("1min")
-            chart_data = df_chart.groupby(
-                ["time_bucket", "severity_name"]).size().reset_index(name="count")
-            st.line_chart(chart_data.pivot(index="time_bucket",
-                          columns="severity_name", values="count").fillna(0))
+        # Sử dụng trực tiếp df (thay vì df_filtered)
+        df_chart = df.copy()
+        df_chart["time_bucket"] = df_chart["timestamp"].dt.floor("1min")
+        chart_data = df_chart.groupby(
+            ["time_bucket", "severity_name"]).size().reset_index(name="count")
+        st.line_chart(chart_data.pivot(index="time_bucket",
+                      columns="severity_name", values="count").fillna(0))
 
         # 2. Pie Chart
         st.markdown(f"### {T['sev_chart_type']}")
-        if not df_filtered.empty:
-            sev_counts = df_filtered["severity_name"].value_counts().reset_index()
-            sev_counts.columns = ["Severity", "Count"]
-            fig = px.pie(sev_counts, values="Count", names="Severity", hole=0.4)
-            st.plotly_chart(fig, use_container_width=True)
+        sev_counts = df["severity_name"].value_counts().reset_index()
+        sev_counts.columns = ["Severity", "Count"]
+        fig = px.pie(sev_counts, values="Count", names="Severity", hole=0.4)
+        st.plotly_chart(fig, use_container_width=True)
 
         # 3. Table
         st.markdown(f"### {T['detailed_syslog']}")
         st.dataframe(
-            df_filtered[["timestamp", "hostname", "severity_name", "message"]].sort_values(
+            df[["timestamp", "hostname", "severity_name", "message"]].sort_values(
                 "timestamp", ascending=False),
             use_container_width=True, height=400
         )
