@@ -449,62 +449,61 @@ elif dashboard_type == T["dash_security"]:
 # ========================
 # 6) Syslog Dashboard
 # ========================
-# ========================
-# 6) Syslog Dashboard
-# ========================
 elif dashboard_type == T["dash_syslog"]:
     st.subheader(T["dash_syslog"])
 
-    # --- 1. PREPARE DATA ---
-    # Giữ bộ lọc Severity ở Sidebar để không chiếm chỗ nội dung chính
-    sev_opts = {
-        T["sev_all"]: None,
-        T["sev_crit"]: [0, 1, 2, 3],
-        T["sev_warn"]: [0, 1, 2, 3, 4],
-        T["sev_notice"]: [0, 1, 2, 3, 4, 5],
-    }
-    sev_label = st.sidebar.selectbox(
-        T["sev_filter"], list(sev_opts.keys()), index=0)
-    sev_codes = sev_opts[sev_label]
-
-    # Query dữ liệu gốc trước (để lấy danh sách host cho bộ lọc)
-    df = query_syslog(time_range, sev_codes)
-
-    # --- 2. MAIN CONTENT FILTERS (FILTER AREA) ---
-    # Tạo container để gom nhóm các bộ lọc
+    # --- 1. SETUP LAYOUT (Tạo khung giao diện trước) ---
+    # Tạo container và chia 3 cột ngay đầu trang
     with st.container():
-        c_filter_1, c_filter_2 = st.columns([1, 1])
-        
-        with c_filter_1:
-            # [NEW] Lọc Hostname nằm ngay trong trang
-            if not df.empty:
-                available_hosts = sorted(df["hostname"].dropna().unique())
-                selected_hosts = st.multiselect(
-                    T["filter_by_host"], 
-                    options=available_hosts,
-                    default=[],
-                    placeholder="Chọn host..."
-                )
-            else:
-                selected_hosts = []
-                st.info("Không có dữ liệu host.")
+        # Chia tỷ lệ cột: Host (2) - Severity (1) - Message (1)
+        col_host, col_sev, col_msg = st.columns([2, 1, 1])
 
-        with c_filter_2:
-            # Chuyển phần tìm kiếm Message vào đây luôn cho tiện
+        # --- Cột 2: Severity (Mức độ) ---
+        # (Hiển thị ngay vì danh sách option là cố định)
+        with col_sev:
+            sev_opts = {
+                T["sev_all"]: None,
+                T["sev_crit"]: [0, 1, 2, 3],
+                T["sev_warn"]: [0, 1, 2, 3, 4],
+                T["sev_notice"]: [0, 1, 2, 3, 4, 5],
+            }
+            sev_label = st.selectbox(T["sev_filter"], list(sev_opts.keys()), index=0)
+            sev_codes = sev_opts[sev_label]
+
+        # --- Cột 3: Message (Tìm kiếm) ---
+        with col_msg:
             message_query = st.text_input(T["search_msg"], value="")
 
-    # --- 3. APPLY FILTERS ---
+    # --- 2. QUERY DATA ---
+    # Truy vấn dữ liệu dựa trên Time Range và Severity đã chọn ở trên
+    df = query_syslog(time_range, sev_codes)
+
+    # --- 3. FILL HOST FILTER (Điền dữ liệu vào Cột 1) ---
+    # Bây giờ đã có dữ liệu (df), ta mới trích xuất danh sách Host để điền vào col_host đã tạo ở bước 1
+    selected_hosts = []
+    with col_host:
+        if not df.empty:
+            available_hosts = sorted(df["hostname"].dropna().unique())
+            selected_hosts = st.multiselect(
+                T["filter_by_host"],
+                options=available_hosts,
+                default=[],
+                placeholder="Chọn host (bỏ trống để xem tất cả)..."
+            )
+        else:
+            st.info("Không có dữ liệu.")
+
+    # --- 4. APPLY LOCAL FILTERS ---
+    # Lọc lại dataframe dựa trên Host và Message người dùng nhập
     if not df.empty:
-        # Lọc theo Hostname đã chọn ở trên
         if selected_hosts:
             df = df[df["hostname"].isin(selected_hosts)]
         
-        # Lọc theo Message
         if message_query:
             df = df[df["message"].str.contains(message_query, case=False, na=False)]
 
-    # --- 4. DISPLAY CHARTS & METRICS ---
-    st.markdown("---") # Đường kẻ phân cách giữa bộ lọc và dữ liệu
+    # --- 5. DISPLAY CHARTS & METRICS ---
+    st.divider()
 
     if df.empty:
         st.warning(T["no_syslog_range"] if not message_query else T["no_syslog_filter"])
@@ -514,7 +513,8 @@ elif dashboard_type == T["dash_syslog"]:
         c1.metric(T["total_events"], len(df))
         c2.metric(T["error_events"], int((df["severity_code"] <= 3).sum()))
 
-        # Chart Filters (Bộ lọc hiển thị riêng cho biểu đồ)
+        # Chart Filters (Bộ lọc hiển thị riêng cho biểu đồ - nếu muốn giữ lại để lọc chi tiết hơn)
+        # Nếu cảm thấy thừa vì đã có lọc Severity ở trên, bạn có thể bỏ đoạn này và dùng luôn df
         all_sevs = sorted(df["severity_name"].dropna().unique())
         selected_sevs = st.multiselect(
             T["filter_by_sev"], options=all_sevs, default=all_sevs)
@@ -547,7 +547,6 @@ elif dashboard_type == T["dash_syslog"]:
                 "timestamp", ascending=False),
             use_container_width=True, height=400
         )
-
 # ========================
 # 7) VyOS Dashboard
 # ========================
