@@ -561,27 +561,67 @@ def get_syslog_chart_data_agg(time_range_label: str):
         df["time_bucket"] = pd.to_datetime(df["time_bucket"])
     return df
 
-        with col_dist:
-            st.markdown(f"### {T['sev_chart_type']}")
-            if not df.empty:
-                sev_counts = df["severity_name"].value_counts().reset_index()
-                sev_counts.columns = ["Severity", "Count"]
-                fig = px.pie(sev_counts, values="Count",
-                             names="Severity", hole=0.4)
-                st.plotly_chart(fig, use_container_width=True)
+# ==========================================
+# VÍ DỤ 2: Thay thế biểu đồ CPU Trends
+# ==========================================
+def get_cpu_trends_agg(time_range_label: str, selected_hosts: list = None):
+    """
+    Tính trung bình CPU theo thời gian cho từng Host sử dụng Aggregation.
+    """
+    gte = get_time_range_gte(time_range_label)
+    
+    # Xây dựng bộ lọc host
+    filters = [{"range": {"@timestamp": {"gte": gte, "lte": "now"}}}]
+    if selected_hosts:
+        filters.append({"terms": {"host.hostname": selected_hosts}})
 
-        st.markdown(f"### {T['detailed_syslog']}")
-        host_filter = st.multiselect(
-            T["filter_by_host"], options=sorted(df["hostname"].dropna().unique()))
-        if host_filter:
-            df = df[df["hostname"].isin(host_filter)]
+    body = {
+        "size": 0, # Size = 0 để tối ưu tốc độ
+        "query": {"bool": {"filter": filters}},
+        "aggs": {
+            # 1. Chia theo thời gian
+            "cpu_over_time": {
+                "date_histogram": {
+                    "field": "@timestamp",
+                    "fixed_interval": "1m" # Hoặc "5m" nếu khoảng thời gian dài
+                },
+                "aggs": {
+                    # 2. Chia theo Hostname
+                    "by_host": {
+                        "terms": {"field": "host.hostname", "size": 20}, # Top 20 host
+                        "aggs": {
+                            # 3. Tính trung bình CPU (Metric Aggregation)
+                            "avg_cpu": {
+                                "avg": {"field": "system.cpu.total.norm.pct"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-        st.dataframe(
-            df[["timestamp", "hostname", "severity_name", "message"]
-               ].sort_values("timestamp", ascending=False),
-            use_container_width=True, height=400
-        )
+    res = es.search(index=METRIC_INDEX, body=body)
+    
+    # Parsing
+    buckets = res["aggregations"]["cpu_over_time"]["buckets"]
+    data = []
+    
+    for bucket in buckets:
+        timestamp = bucket["key_as_string"]
+        for host_bucket in bucket["by_host"]["buckets"]:
+            avg_val = host_bucket["avg_cpu"]["value"]
+            if avg_val is not None:
+                data.append({
+                    "time_bucket": timestamp,
+                    "hostname": host_bucket["key"],
+                    "cpu_pct": avg_val
+                })
 
+    df = pd.DataFrame(data)
+    if not df.empty:
+        df["time_bucket"] = pd.to_datetime(df["time_bucket"])
+    return df
 # ========================
 # 7) VyOS Dashboard
 # ========================
