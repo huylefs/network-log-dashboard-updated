@@ -261,7 +261,9 @@ T = LANGS[LANG]
 st.title(T["title"])
 st.caption(T["caption"])
 
-# Chọn Dashboard
+# --- SỬA LỖI MENU: Dùng Callback để giữ trạng thái & tránh nháy ---
+
+# A. Danh sách lựa chọn hiện tại (theo ngôn ngữ)
 menu_options = [
     T["dash_status"],
     T["dash_security"],
@@ -269,20 +271,28 @@ menu_options = [
     T["dash_vyos"]
 ]
 
-# 2. Khởi tạo index trong session_state nếu chưa có
+# B. Khởi tạo index trong session_state nếu chưa có
 if "dash_index" not in st.session_state:
     st.session_state["dash_index"] = 0
 
-# 3. Tạo Radio button với index lấy từ session_state
+# C. Hàm Callback: Chạy ngay lập tức khi bạn click chọn menu
+def update_index():
+    # Lấy giá trị vừa chọn từ widget (thông qua key 'menu_selection')
+    choice = st.session_state.menu_selection
+    # Tìm xem giá trị đó nằm ở vị trí số mấy trong danh sách
+    if choice in menu_options:
+        st.session_state["dash_index"] = menu_options.index(choice)
+
+# D. Tạo Radio button
 dashboard_type = st.sidebar.radio(
     T["select_dashboard"],
     menu_options,
-    index=st.session_state["dash_index"]
+    index=st.session_state["dash_index"], # Luôn lấy vị trí từ bộ nhớ
+    key="menu_selection",                 # Đặt key để liên kết với hàm callback
+    on_change=update_index                # Gọi hàm cập nhật ngay khi bấm
 )
 
-# 4. Cập nhật lại index vào session_state ngay sau khi người dùng chọn
-# (Để lần sau reload/đổi ngôn ngữ nó nhớ vị trí này)
-st.session_state["dash_index"] = menu_options.index(dashboard_type)
+# --- KHÔI PHỤC PHẦN BỊ MẤT: TIME RANGE & REFRESH ---
 
 time_range = st.sidebar.selectbox(T["time_range"], T["ranges"], index=0)
 st.sidebar.markdown("---")
